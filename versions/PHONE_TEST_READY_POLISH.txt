@@ -1,0 +1,21 @@
+Phone Polish READY for phone test (NOT v2-integrated yet — wait for teammates to land)
+
+Tunnel: https://illustration-ensures-studies-chris.trycloudflare.com
+Local:  http://127.0.0.1:8765
+
+Checkpoint: v2-polish-20260924-210440
+
+Phone-testable NOW:
+- Upload song → Identifying… → Fetching lyrics… → Lyrics found (N) → Generate → Planning… → show (or Tap to play)
+- Generate button locks (busy) and always unlocks in finally
+- Tap-to-play overlay when autoplay blocked
+- Status warn/error colors
+- Safe-area overlay + fullscreen webkit fallback
+- Show-screen scroll lock (no body bounce)
+- Auto mood / Moderate intensity / Cinematic+Dreamlike defaults unchanged
+
+Hard refresh:
+- iOS Safari: open tunnel URL → tap aA → tap Reload (or close tab, clear cache for site, reopen). Prefer Add to Home Screen only after hard reload once.
+- Android Chrome: open tunnel → ⋮ → tap-hold Reload → "Empty cache and hard reload" if available; else Settings → Privacy → Clear browsing data (cached images/files) for the site, then reopen.
+
+Do NOT create v2-integrated until Lyrics/Audio/Scene/Visual land their passes.

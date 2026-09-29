@@ -34,6 +34,7 @@ class LightShowApp {
     this.identity = new SongIdentity();
 
     this.mediaElement = null;
+    this._objectUrl = null;
     this.sourceNode = null;
     this.micStream = null;
     this.playing = false;
@@ -50,7 +51,17 @@ class LightShowApp {
   }
 
   _wire() {
-    this.controls.on('source', (s) => this._onSource(s));
+    // Snapshot File bytes synchronously on emit (before change-handler clears input).
+    // Samsung Chrome can invalidate input.files after value='' while async load runs.
+    this.controls.on('source', (s) => {
+      if (s?.type === 'file' && s.file) {
+        const f = s.file;
+        s._stableBytes = f.arrayBuffer()
+          .then((ab) => ({ ab, name: f.name || 'audio', mime: f.type || '', lastModified: f.lastModified || Date.now() }))
+          .catch(() => null);
+      }
+      this._onSource(s);
+    });
     this.controls.on('generate', (settings) => this._generate(settings));
     this.controls.on('exit', () => this._exitShow());
     this.controls.on('fullscreen', () => this._toggleFullscreen());
@@ -74,7 +85,31 @@ class LightShowApp {
     if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
   }
 
-  async _onSource({ type, file }) {
+  async _onSource({ type, file, _stableBytes }) {
+    // Resolve stable bytes BEFORE any await that yields to the change-handler clear.
+    // (_stableBytes was kicked off synchronously in _wire.)
+    let stable = null;
+    if (type === 'file' && file) {
+      const snap = _stableBytes ? await _stableBytes : null;
+      if (snap?.ab) {
+        const mime = snap.mime || 'audio/mpeg';
+        stable = {
+          name: snap.name,
+          mime,
+          file: new File([snap.ab], snap.name, { type: mime, lastModified: snap.lastModified }),
+          blob: new Blob([snap.ab], { type: mime })
+        };
+      } else if (file) {
+        // Fallback if snapshot failed — may still work on desktop
+        stable = {
+          name: file.name || 'audio',
+          mime: file.type || 'audio/mpeg',
+          file,
+          blob: file
+        };
+      }
+    }
+
     await this._ensureAudio();
     this._disconnectSource();
     this._lyricsResolved = false;
@@ -103,91 +138,120 @@ class LightShowApp {
       return;
     }
 
-    if (type === 'file' && file) {
-      const url = URL.createObjectURL(file);
+    if (type === 'file' && stable) {
+      const url = URL.createObjectURL(stable.blob);
+      this._objectUrl = url;
       const audio = new Audio();
-      audio.src = url;
-      audio.crossOrigin = 'anonymous';
+      // Do NOT set crossOrigin on blob: URLs — Samsung/Android Chrome can fail
+      // MediaElementSource / never fire loadedmetadata when anonymous is set.
+      audio.preload = 'auto';
       audio.loop = false;
       audio.playsInline = true;
       audio.setAttribute('playsinline', '');
       audio.setAttribute('webkit-playsinline', '');
       try {
         await new Promise((resolve, reject) => {
-          audio.addEventListener('loadedmetadata', resolve, { once: true });
-          audio.addEventListener('error', () => reject(new Error('Could not load audio file')), { once: true });
+          let settled = false;
+          const to = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              reject(new Error('Audio metadata timeout'));
+            }
+          }, 20000);
+          const ok = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(to);
+            resolve();
+          };
+          const bad = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(to);
+            reject(new Error('Could not load audio file'));
+          };
+          audio.addEventListener('loadedmetadata', ok, { once: true });
+          audio.addEventListener('loadeddata', ok, { once: true });
+          audio.addEventListener('canplay', ok, { once: true });
+          audio.addEventListener('error', bad, { once: true });
+          audio.src = url;
+          try { audio.load(); } catch { /* some WebViews throw */ }
         });
       } catch (err) {
-        this.controls.setStatus('Audio load failed — try another file', 'error');
+        try { URL.revokeObjectURL(url); } catch { /* */ }
+        this._objectUrl = null;
+        console.warn('audio load failed', err);
+        this.controls.setStatus('Audio load failed — try another file (mp3/m4a/wav)', 'error');
         this.controls.setSongIdentity({
-          artist: '', title: '', label: file.name,
+          artist: '', title: '', label: stable.name,
           status: 'Audio failed — try another file'
         });
         return;
       }
       this.mediaElement = audio;
-      this.duration = audio.duration || 0;
-      this.sourceNode = this.audioCtx.createMediaElementSource(audio);
-      const out = this.analyzer.connect(this.sourceNode);
-      out.connect(this.audioCtx.destination);
-      this.controls.setAudioLabel(`${file.name} (${this._fmt(this.duration)})`);
+      this.duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      try {
+        this.sourceNode = this.audioCtx.createMediaElementSource(audio);
+        const out = this.analyzer.connect(this.sourceNode);
+        out.connect(this.audioCtx.destination);
+      } catch (err) {
+        console.warn('createMediaElementSource failed', err);
+        this.controls.setStatus('Audio graph failed — reload page and try again', 'error');
+        return;
+      }
+      this.controls.setAudioLabel(`${stable.name} (${this._fmt(this.duration)})`);
 
-      // Identify song from ID3 / filename
+      // Identify song from ID3 / filename (use stable File copy)
       this.controls.setSongIdentity({
         artist: '',
         title: '',
-        label: file.name,
+        label: stable.name,
         status: 'Identifying…'
       });
       this.controls.setStatus('Identifying…');
 
       let id;
       try {
-        id = await this.identity.identifyFromFile(file);
+        id = await this.identity.identifyFromFile(stable.file);
       } catch (err) {
         console.warn('identifyFromFile failed', err);
         this.identity.reset();
         id = {
           artist: '',
           title: '',
-          label: file.name,
+          label: stable.name,
           status: 'needs_manual',
           source: 'none',
-          fileName: file.name
+          fileName: stable.name
         };
       }
 
-      if (id.status === 'needs_manual' || (!id.artist && !id.title)) {
+      // Autofetch whenever we have artist OR title (LRCLIB title-only retry works).
+      // needs_manual used to block fetch when only one field was filled — that was the P0.
+      if (id.artist || id.title) {
+        const partial = !(id.artist && id.title);
         this.controls.setSongIdentity({
           ...id,
-          label: id.label || file.name,
-          status: 'Couldn’t ID — enter artist & title, then Fetch'
-        });
-        this.controls.setStatus(
-          'Couldn’t identify song — type artist & title below, then Fetch lyrics',
-          'warn'
-        );
-      } else if (id.artist || id.title) {
-        // Ready — fetch updates status to Fetching… → Lyrics found (N)
-        this.controls.setSongIdentity({
-          ...id,
-          status: 'Fetching lyrics…'
+          label: id.label || stable.name,
+          status: partial
+            ? 'Fetching lyrics… (add missing artist/title if wrong)'
+            : 'Fetching lyrics…'
         });
         await this._fetchLyrics({ artist: id.artist, title: id.title });
       } else {
         this.controls.setSongIdentity({
           ...id,
-          label: file.name,
-          status: 'Couldn’t ID — enter artist & title, then Fetch'
+          label: id.label || stable.name,
+          status: "Couldn't ID — enter artist & title, then Fetch"
         });
         this.controls.setStatus(
-          'Couldn’t identify song — type artist & title below, then Fetch lyrics',
+          "Couldn't identify song — type artist & title below, then Fetch lyrics",
           'warn'
         );
       }
 
       try {
-        const key = 'lightshow_profile_' + file.name;
+        const key = 'lightshow_profile_' + stable.name;
         const prev = localStorage.getItem(key);
         if (prev) {
           const p = JSON.parse(prev);
@@ -258,8 +322,13 @@ class LightShowApp {
       this.micStream = null;
     }
     if (this.mediaElement) {
-      this.mediaElement.pause();
+      try { this.mediaElement.pause(); } catch { /* */ }
+      try { this.mediaElement.removeAttribute('src'); this.mediaElement.load(); } catch { /* */ }
       this.mediaElement = null;
+    }
+    if (this._objectUrl) {
+      try { URL.revokeObjectURL(this._objectUrl); } catch { /* */ }
+      this._objectUrl = null;
     }
     this.sourceNode = null;
   }

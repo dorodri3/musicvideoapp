@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Light Show — Imagined Movie</title>
-  <link rel="stylesheet" href="css/style.css?v=hold1317" />
+  <link rel="stylesheet" href="css/style.css?v=lyrics-fix1" />
 </head>
 <body>
   <div id="setup-screen">
@@ -22,10 +22,11 @@
           <button type="button" id="btn-mic">Microphone</button>
           <div class="file-pick">
             <label for="file-audio" id="btn-upload" class="btn file-pick-label">Upload song</label>
-            <input type="file" id="file-audio" class="file-pick-input" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.mp4,.mov" />
+            <input type="file" id="file-audio" class="file-pick-input" accept="*/*" />
           </div>
         </div>
         <div id="audio-label">No audio selected</div>
+        <p id="upload-hint" class="hint">If the picker looks empty, choose Files and any mp3/m4a/wav.</p>
 
         <div id="song-card" class="song-card hidden">
           <div id="song-card-title" class="song-card-title">—</div>
@@ -123,6 +124,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/main.js?v=hold1317"></script>
+  <script type="module" src="js/main.js?v=lyrics-fix1"></script>
 </body>
 </html>

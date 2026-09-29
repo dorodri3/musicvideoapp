@@ -30,26 +30,48 @@ export class Controls {
       uploadBtn.addEventListener('click', () => fileInput?.click());
     }
     if (fileInput) {
-      fileInput.addEventListener('change', () => {
+      // Samsung/Android may fire `input` or `change` inconsistently — listen to both, debounce.
+      let _pickLock = false;
+      const onAudioPicked = () => {
+        if (_pickLock) return;
         const f = fileInput.files?.[0];
-        if (f) {
-          const name = (f.name || '').toLowerCase();
-          const ext = name.includes('.') ? name.split('.').pop() : '';
-          const audioExts = new Set(['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'mp4', 'mov']);
-          const mime = (f.type || '').toLowerCase();
-          const mimeOk = !mime || mime.startsWith('audio/') || mime === 'video/mp4' || mime === 'video/quicktime';
-          const extOk = audioExts.has(ext);
-          // Empty/weird MIME on Samsung: accept if extension looks audio; reject clear non-audio
-          if (!mimeOk && !extOk) {
-            this.setStatus('That file does not look like audio. Try mp3, m4a, wav, or similar.', 'error');
-            fileInput.value = '';
-            return;
-          }
-          this.emit('source', { type: 'file', file: f });
+        if (!f) return;
+        _pickLock = true;
+        setTimeout(() => { _pickLock = false; }, 400);
+
+        const rawName = f.name || 'audio';
+        const name = rawName.toLowerCase();
+        const ext = name.includes('.') ? name.split('.').pop() : '';
+        const audioExts = new Set([
+          'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus',
+          'mp4', 'm4v', 'mov', 'webm', '3gp', 'amr', 'wma', 'aiff', 'aif', 'caf'
+        ]);
+        const mime = (f.type || '').toLowerCase();
+        const extOk = audioExts.has(ext);
+        // Accept: audio-like ext OR audio/* OR video/mp4 (etc) OR empty mime (Samsung quirk)
+        const mimeOk = !mime || mime.startsWith('audio/') || mime.startsWith('video/')
+          || mime === 'application/octet-stream';
+        // Reject ONLY when mime is clearly image/pdf/doc AND ext is not audio
+        const clearlyBad = /^(image\/|application\/(pdf|msword|vnd)|text\/(html|css|javascript))/.test(mime);
+        if (clearlyBad && !extOk) {
+          this.setStatus('That file does not look like audio. Try mp3, m4a, wav, or similar.', 'error');
+          fileInput.value = '';
+          return;
         }
+        if (!extOk && !mimeOk && mime) {
+          // Non-empty unknown mime without audio ext — soft reject
+          this.setStatus('That file does not look like audio. Try mp3, m4a, wav, or similar.', 'error');
+          fileInput.value = '';
+          return;
+        }
+        // Immediate phone feedback before decode/ID
+        this.setStatus('Got "' + rawName + '" — identifying…');
+        this.emit('source', { type: 'file', file: f });
         // allow re-picking the same file later
         fileInput.value = '';
-      });
+      };
+      fileInput.addEventListener('change', onAudioPicked);
+      fileInput.addEventListener('input', onAudioPicked);
     }
 
     const lyricsArea = $('lyrics-input');
@@ -176,6 +198,7 @@ export class Controls {
     }
     const fetchBtn = this.root.getElementById('btn-fetch-lyrics');
     if (fetchBtn) fetchBtn.disabled = !!busy;
+    // Never disable #file-audio / .file-pick-input — Samsung needs the overlay input live
   }
 
   setShowPrompt(msg) {

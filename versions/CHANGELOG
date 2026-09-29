@@ -1,0 +1,36 @@
+v2-scene-20260924-210751 — Scene Director: pre Neon Highway brief lock
+v2-scene-20260924-212044 — Scene Director: characters cast + motifProps + lyricStickExpire; pack IDs apocalyptic_warzone/candy_happy/neon_highway/cozy_autumn; stay-in-family verse→chorus
+v2-scene-20260924-213127-cast-library-wire | Scene Director HOLD fix: castLibrary wired into _liveCast; members[] populated for Visual
+v2-visual-role-weapons-20260924-213759 — Visual: roleId FX + weaponId props draw (aliases handgun_beat/scope_flash/burden_suit/ash_aftermath/rifle_silhouette)
+
+=== v2-visual-pre-dance-20260924-213843 (pre) ===
+Time: 2026-09-24 21:40:16 JST
+Visual Engine pre-dance checkpoint (copy of light-show before dance motion)
+
+=== v2-visual-dance-20260924-214016 ===
+Time: 2026-09-24 21:40:16 JST
+Visual Engine: readable cast dance motion (MUSIC-BRIEF-20260924-2138 + thin GENRE-MAP amp)
+- castLibrary.js: applyDanceMotion + drawCastFigure wire
+  triggers: action dance|step|spin|sway|groove|freestyle|formation; kind=dancer;
+  archetypes pop_candy|neon_runner|formation_crew|fg_performer; danceIntent; kick|snare|hats>0.45
+  motions: step (kick footfalls+bob), sway (snare/hats lean), spin (feet-pivot rotate)
+  feet on baseY; holdSilent=none; speechLike/spoken_intimate ≤30% amp; scary freeze
+  cheap genre: ambient/spoken/classical freeze; jazz/gospel micro; pop/k-pop amp+; metal chaos-only
+- renderer.js: pass roles/speechLike/danceIntent/vibe/section/genreFamily into drawCastFigure
+  member merge: roleId/rolePulse/weaponId/danceIntent; weapons still Scene-stamped only
+- HOLD: no typography / HOLD lyric plate edits; cast visibility not reduced
+Pre: v2-visual-pre-dance-20260924-213843
+node --check: castLibrary.js + renderer.js OK
+
+=== v2-worlds-pre-genre-20260924-214026 (pre) ===
+Time: 2026-09-24 21:40:26 JST
+Worlds Engine pre-genre checkpoint (copy of light-show before CEO genre pack wave)
+
+=== v2-worlds-vibe-route-20260924-214132 ===
+Time: 2026-09-24 21:41:32 JST
+Worlds Engine: QA-2129 vibe→pack routing fix
+- scenePlan.js: deduped VIBE-TAXONOMY pack families; vibe-first section defaults and congruence filters; peaceful/calm/nature preplan seeding; live 4s morph repair off incongruent beds; soft genreHint leads.
+- vibeCast.js: shared forbidden preset lists and genreLeadPresets().
+- Peaceful escapes neon via meadow/misty/forest leads; spoken/scary/chaotic live leads are similarly protected.
+- Scope: only js/director/scenePlan.js and js/director/vibeCast.js.
+node --check: scenePlan.js + vibeCast.js OK

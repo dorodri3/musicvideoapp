@@ -241,3 +241,6 @@ DRIVE 2026-09-30 ~05:10 JST — :8765+tunnel restored (https://senior-recorded-k
 v2-phone-upload-samsung-20260929 — label-for file picker + visually-hidden + broader accept (Samsung/iOS)
 v2-polish-upload-samsung-20260930-051352 — Phone Polish pre Samsung upload harden
 v2-lyrics-semantic-comma-20260929-1317 — missing comma after crowd_sea (HOLD QA-1317)
+v2-polish-upload-reharden-20260930-053932 — Phone Polish Samsung upload re-harden
+v2-polish-upload-reharden — Samsung accept=*/* + opacity 0.01 + font-size 100px + input/change debounce (?v=upload-reharden)
+v2-lyrics-autofetch-partial-id-20260930-054215 — Lyrics Brain P0: autofetch when artist OR title present (was blocked by needs_manual); cache bust lyrics-fix1
