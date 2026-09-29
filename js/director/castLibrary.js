@@ -1239,17 +1239,12 @@ export function applyDanceIntent(members, cast = {}, opts = {}) {
 }
 
 
-/**
- * P0 QA-2142: every section with Characters on must emit ≥1 LARGE foreground hub
- * so Visual's upsized draw has a human-scale figure (not a speck).
- * Companions (kick/snare/hats/pads) may stay smaller; vocalish/lead hub is forced big.
- */
 /** Map legacy string scale names → numeric (Visual Number('human') === NaN). */
 function _numericScale(v, floor = 1.0) {
   if (typeof v === 'number' && Number.isFinite(v)) return Math.max(floor, v);
   const s = String(v || '').toLowerCase();
   const map = {
-    intimate: 1.25, human: 1.55, cinematic: 1.7, epic: 1.9, cosmic: 2.1
+    intimate: 2.0, human: 2.2, cinematic: 2.4, epic: 2.8, cosmic: 3.2
   };
   if (map[s] != null) return Math.max(floor, map[s]);
   const n = Number(v);
@@ -1257,9 +1252,9 @@ function _numericScale(v, floor = 1.0) {
 }
 
 /**
- * P0 QA-2142/2149: every Characters-on frame must emit ≥1 LARGE foreground hub.
- * Resurrects kind==='none' (Lyrics suggestsCharacter:false) — never empty emit.
- * Coerces ALL member scales to numeric; hub is members[0] for Visual idx===0 lead.
+ * P0 QA-2142/2149/1345: Characters-on MUST emit ≥1 READABLE human-scale FG hub.
+ * Live fail mode: near-black silhouette on dark rain → invisible; only motif dots
+ * read as "speck". Force neon/dream rim style + large numeric scale; hub = members[0].
  */
 export function ensureCastPresence(cast, opts = {}) {
   if (!cast) return cast;
@@ -1275,29 +1270,35 @@ export function ensureCastPresence(cast, opts = {}) {
     || cast.archetype === 'dread_sparse'
     || cast.archetype === 'void_presence';
 
-  // Human-scale floors (Visual multiplies; we still send large base)
-  const hubScale = sparseMood ? 1.25 : 1.55;
-  const hubOpacity = sparseMood ? 0.82 : 0.95;
-  const hubPresence = sparseMood ? 0.75 : 0.95;
+  // Phone LED: Visual targetFrac ~0.60h × (dirScale/1.55). Floor high so body
+  // cannot collapse to a dot even if Visual clamps mid-pipeline.
+  const hubScale = sparseMood ? 2.0 : 2.4;
+  const hubOpacity = 1;
+  const hubPresence = 1;
 
-  // HOLD-2149: never leave kind none — Visual then draws nothing / speck FX only
-  if (cast.kind === 'none' || !cast.kind) {
+  if (cast.kind === 'none' || !cast.kind || cast.kind === 'fauna') {
     cast.kind = 'traveler';
     cast.count = Math.max(1, cast.count || 1);
-    cast.action = cast.action || 'walk';
+    cast.action = cast.action && cast.action !== 'dissolve' ? cast.action : 'walk';
   }
 
-  cast.characterId = cast.characterId || 'path_walker_dawn';
-  cast.outfitId = cast.outfitId || 'linen_dawn';
-  cast.archetype = cast.archetype || 'tableau_figure';
-  cast.style = cast.style || 'silhouette';
+  // Readable on dark LED walls — silhouette fill is near-black (invisible on rain/neon)
+  const readableStyle = (sparseMood ? 'dream' : 'neon');
+  cast.characterId = cast.characterId || (sparseMood ? 'close_confessor' : 'path_walker_dawn');
+  cast.outfitId = cast.outfitId === 'empty_chair'
+    ? (sparseMood ? 'desk_lamp' : 'neon_trim')
+    : (cast.outfitId || (sparseMood ? 'desk_lamp' : 'stage_gloss'));
+  cast.archetype = (cast.archetype === 'nature_fauna' || !cast.archetype)
+    ? (sparseMood ? 'spoken_intimate' : 'fg_performer')
+    : cast.archetype;
+  cast.style = readableStyle;
   cast.placement = 'foreground';
-  cast.opacity = Math.max(hubOpacity, Number(cast.opacity) || 0);
-  cast.presence = Math.max(hubPresence, Number(cast.presence) || 0);
-  cast.scale = _numericScale(cast.scale, hubScale);
-  if (cast.scale < hubScale) cast.scale = hubScale;
-  cast.holdSilent = false; // P0: never mute the only readable body
+  cast.opacity = hubOpacity;
+  cast.presence = hubPresence;
+  cast.scale = Math.max(hubScale, _numericScale(cast.scale, hubScale));
+  cast.holdSilent = false;
   cast.count = Math.max(1, cast.count || 1);
+  cast.readableCast = true; // Visual may honor for fill/rim boost
 
   let members = Array.isArray(cast.members) ? cast.members.map(m => ({ ...m })) : [];
   if (!members.length) {
@@ -1306,50 +1307,54 @@ export function ensureCastPresence(cast, opts = {}) {
       outfitId: cast.outfitId,
       archetype: cast.archetype,
       kind: cast.kind || 'traveler',
-      style: cast.style,
+      style: readableStyle,
       placement: 'foreground',
       scale: hubScale,
       opacity: hubOpacity,
       presence: hubPresence,
       action: cast.action || 'walk',
       roleId: 'vocalish',
-      holdSilent: false
+      holdSilent: false,
+      readableCast: true
     }];
   }
 
-  // Coerce every member scale numeric (kill NaN from 'cinematic'/'human')
   for (const m of members) {
     if (!m) continue;
-    m.scale = _numericScale(m.scale, 0.9);
+    m.scale = _numericScale(m.scale, 1.2);
     if (typeof m.opacity === 'string') m.opacity = Number(m.opacity) || hubOpacity;
-    if (m.kind === 'none') m.kind = cast.kind || 'traveler';
+    if (m.kind === 'none' || m.kind === 'fauna') m.kind = cast.kind || 'traveler';
+    if (m.outfitId === 'empty_chair') m.outfitId = cast.outfitId;
     m.holdSilent = false;
   }
 
-  // Pick hub: vocalish/lead preferred, else first non-pads/hats
   let hubIdx = members.findIndex(m => m && (m.roleId === 'vocalish' || m.roleId === 'lead'));
   if (hubIdx < 0) {
-    hubIdx = members.findIndex(m => m && m.roleId !== 'pads' && m.roleId !== 'hats');
+    hubIdx = members.findIndex(m => m && m.roleId !== 'pads' && m.roleId !== 'hats' && m.roleId !== 'harsh');
   }
   if (hubIdx < 0) hubIdx = 0;
 
   const hub = members[hubIdx];
   hub.characterId = hub.characterId || cast.characterId;
-  hub.outfitId = hub.outfitId || cast.outfitId;
-  hub.archetype = hub.archetype || cast.archetype;
+  hub.outfitId = (hub.outfitId === 'empty_chair' ? cast.outfitId : hub.outfitId) || cast.outfitId;
+  hub.archetype = (hub.archetype === 'nature_fauna' ? cast.archetype : hub.archetype) || cast.archetype;
   hub.kind = (hub.kind && hub.kind !== 'none' && hub.kind !== 'fauna')
     ? hub.kind
-    : (cast.kind && cast.kind !== 'none' ? cast.kind : 'traveler');
-  hub.style = hub.style || cast.style || 'silhouette';
+    : (cast.kind || 'traveler');
+  hub.style = readableStyle;
   hub.placement = 'foreground';
   hub.scale = Math.max(hubScale, _numericScale(hub.scale, 0));
-  hub.opacity = Math.max(hubOpacity, typeof hub.opacity === 'number' ? hub.opacity : 0);
-  hub.presence = Math.max(hubPresence, typeof hub.presence === 'number' ? hub.presence : 0);
+  hub.opacity = hubOpacity;
+  hub.presence = hubPresence;
   hub.holdSilent = false;
   hub.roleId = hub.roleId || 'vocalish';
   hub.action = hub.action || cast.action || 'walk';
+  hub.readableCast = true;
+  // Kill fauna / empty-chair look on the only body that must read
+  if (Array.isArray(hub.accessories)) {
+    hub.accessories = hub.accessories.filter(a => a !== 'fauna' && a !== 'empty_chair');
+  }
 
-  // Hub MUST be members[0] — Visual treats idx===0 as lead body height
   if (hubIdx !== 0) {
     members.splice(hubIdx, 1);
     members.unshift(hub);
@@ -1357,16 +1362,23 @@ export function ensureCastPresence(cast, opts = {}) {
     members[0] = hub;
   }
 
-  // Mirror hub ids onto cast root for Visual normalize
+  // Verse / spoken: keep ONE hub only — companions read as extra dots on phone
+  if (sectionType === 'verse' || sectionType === 'pre' || sectionType === 'intro'
+      || sparseMood || sectionType === 'outro') {
+    members = [hub];
+  }
+
   cast.characterId = hub.characterId;
   cast.outfitId = hub.outfitId;
   cast.archetype = hub.archetype;
   cast.kind = hub.kind;
+  cast.style = readableStyle;
   cast.members = members;
-  cast.presence = hub.presence;
+  cast.presence = hubPresence;
   cast.scale = hub.scale;
-  cast.opacity = Math.max(cast.opacity, hub.opacity);
+  cast.opacity = hubOpacity;
   cast.placement = 'foreground';
+  cast.count = members.length;
 
   return cast;
 }

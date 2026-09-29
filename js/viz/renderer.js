@@ -6,7 +6,7 @@
 import { ContinuityEngine } from '../scene/continuity.js';
 import { CameraSystem } from '../camera/system.js';
 import { LightingSystem } from '../lighting/system.js';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=hold2149';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=hold1345-cast';
 import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js';
 import { getMotionComfort } from '../a11y/motionPrefs.js';
 
@@ -901,16 +901,14 @@ export class Renderer {
     const placement = spec.placement || 'foreground';
     const baseY = this._stageY(h, placement, directive, state);
     const count = Math.max(1, Math.min(6, Number(spec.count) || 1));
-    // HOLD-2149 + Scene cast-presence: honor members[] scale (≥1.55) — NEVER shrink.
-    // Hub = members[0] / idx===0 → lead ~0.60h; non-hub never treated as lead.
-    // Number(scale)||1.55 guards NaN from strings like 'cinematic'.
     const rawScale = Number(spec.scale);
     const dirScale = Math.max(1.55, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1.55);
-    const isLead = idx === 0; // hub only
-    const targetFrac = isLead ? 0.60 : Math.max(0.36, 0.50 - idx * 0.04);
-    const BODY_REF = 48; // castLibrary bodyH units
-    // floor 4.0; clamp high ≥16 so scale-4+ reads human (not 2px stick)
-    const scale = Math.max(4.0, Math.min(16, (h * targetFrac / BODY_REF) * (dirScale / 1.55)));
+    const isLead = idx === 0;
+    const targetFrac = isLead ? 0.62 : Math.max(0.42, 0.52 - idx * 0.04);
+    const BODY_REF = 48;
+    // HOLD-1345: NO max-16 clamp — lead body ≥ 0.55h on any canvas height
+    let scale = (h * targetFrac / BODY_REF) * (dirScale / 1.55);
+    if (!Number.isFinite(scale) || scale < 4) scale = Math.max(4, h * 0.55 / BODY_REF);
     let opacity = spec.opacity != null ? Number(spec.opacity) : 0.95;
     if (!Number.isFinite(opacity)) opacity = 0.95;
     const holdSilent = !!spec.holdSilent;
@@ -919,7 +917,15 @@ export class Renderer {
     const action = (spec.action || 'stand').toString().toLowerCase();
     const t = state?.t || 0;
     const vibe = directive?.vibe || directive?.mood || state?.vibe || '';
-    const look = resolveCastLook(spec, vibe);
+    const sceneCast = directive?.cast && !Array.isArray(directive.cast) && typeof directive.cast === 'object' ? directive.cast : null;
+    const requestedStyle =
+      (spec.style === 'neon' || spec.style === 'dream') ? spec.style :
+      (sceneCast?.style === 'neon' || sceneCast?.style === 'dream') ? sceneCast.style : null;
+    const readableCast = !!(spec.readableCast || sceneCast?.readableCast);
+    const lookSpec = requestedStyle
+      ? { ...spec, style: requestedStyle }
+      : (readableCast ? { ...spec, style: spec.style || 'neon', readableCast: true } : spec);
+    const look = resolveCastLook(lookSpec, vibe);
     const spread = look.formation ? 0.36 : 0.28;
     const i = idx % Math.max(1, count);
     // Center-frame single dancer / fg lead; formation keeps lead near center-readable

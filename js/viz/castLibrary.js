@@ -656,8 +656,7 @@ export function applyDanceMotion(opts = {}) {
  */
 export function drawCastFigure(ctx, opts) {
   const look = opts.look || resolveCastLook({});
-  // HOLD-2149: human-scale FG (~0.60 canvas h lead). Clamp ≥16 so scale 4+ is human, not speck.
-  const scale0 = Math.max(0.8, Math.min(16, Number(opts.scale) || 1));
+  const scale0 = Math.max(0.8, Math.min(48, Number(opts.scale) || 1));
   const sparse = look.sparseScale || 1;
   let scale = scale0 * Math.max(0.85, sparse); // never crush members to dust via sparse
   if (!Number.isFinite(scale) || scale < 0.8) scale = 4.0;

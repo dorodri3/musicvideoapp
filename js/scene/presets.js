@@ -190,17 +190,18 @@ function figureStage(ctx, w, h, state, opts = {}) {
     const tt = count === 1 ? 0.5 : (0.5 - spread / 2) + (spread * i) / Math.max(1, count - 1);
     const fx = w * tt + Math.sin((state.t || 0) * 0.2 + i) * (opts.sway ?? 8);
     const baseY = groundY - 2;
-    let bodyH = opts.bodyH ?? 36;
-    let headR = opts.headR ?? 7;
+    let bodyH = Math.max(Number(opts.bodyH) || 0, h * 0.55);
+    let headR = Math.max(Number(opts.headR) || 0, bodyH * 0.18);
+    const bodyW = Math.max(12, bodyH * 0.28);
     let bodyTop = baseY - bodyH;
     if (pose === 'kneel') {
-      bodyH = 24;
+      bodyH *= 0.68;
       bodyTop = baseY - bodyH;
-      ctx.fillRect(fx - 10, baseY - 8, 20, 8);
+      ctx.fillRect(fx - bodyW / 2, baseY - 8, bodyW, 8);
     } else if (pose === 'float') {
       bodyTop = groundY - bodyH - (placement === 'sky' || placement === 'upper' ? 0 : 30) - Math.sin((state.t || 0) * 0.8 + i) * 12;
     }
-    ctx.fillRect(fx - 6, bodyTop, 12, bodyH);
+    ctx.fillRect(fx - bodyW / 2, bodyTop, bodyW, bodyH);
     ctx.beginPath();
     ctx.arc(fx, bodyTop, headR, 0, Math.PI * 2);
     ctx.fill();
@@ -229,6 +230,7 @@ function typePlane(ctx, w, h, opts = {}) {
 
 /** Reserve / lightly mark 1–2 mid-ground scenic props from motifProps. */
 function motifMarks(ctx, w, h, state, opts = {}) {
+  if (wantsFigures(state)) return;
   const props = getMotifProps(state);
   if (!props) return;
   const midY = opts.midY ?? h * 0.58;
