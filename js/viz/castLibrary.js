@@ -93,7 +93,7 @@ export const OUTFITS = {
   },
   stage_gloss: {
     palette: { fill: 'rgba(16,12,20,0.92)', rim: 'rgba(255,230,180,0.75)', accent: 'rgba(255,200,120,0.55)', shadow: 'rgba(10,8,14,0.55)' },
-    accessories: ['coat', 'trim', 'mic_stand'],
+    accessories: ['coat', 'trim'],
     shape: { bodyW: 17.0, bodyH: 49.5, headR: 9.45, lean: 0.08, torn: 0, cloak: 0 },
     rimRoughness: 0.12
   },
@@ -905,7 +905,7 @@ function _isVocalistLead(opts, look) {
   const kind = (opts?.kind || '').toString().toLowerCase();
   if (/performer|vocal|singer/.test(kind)) return true;
   const castRole = (opts?.castRole || opts?.directiveRole || '').toString().toLowerCase();
-  if (/performer|vocal|singer|lead/.test(castRole)) return true;
+  if (/(^|_)(performer|vocal|vocalish|singer|lead)(_|$)/.test(castRole) || /^(performer|vocal|vocalish|singer|lead)$/.test(castRole)) return true;
   const outfitId = (look?.outfitId || '').toString().toLowerCase();
   const placement = (opts?.placement || '').toString().toLowerCase();
   const acc = look?.accessories || [];

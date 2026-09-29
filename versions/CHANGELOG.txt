@@ -274,3 +274,8 @@ Scope: js/camera/* only (+ versions checkpoint). No Visual/Scene/renderer edits.
 node --check: system.js + framing.js OK
 MUSIC-BRIEF vocalist silhouette + earned weapons (20260929)
 v2-scene-20260930-062600-vibe-match — Scene vibe-match: cast bands + sticky 9s + spin/travel + vocalist hub + earned weapons; Worlds packs intact
+
+## v2-visual-vocal-weapons-20260930-062638 (Visual Engine)
+- Vocalist FG silhouette (mic-stand / open chest / raised forearm) on Scene performer/vocal stamps
+- Stronger phone-readable weapons (rifle/handgun) + scrap_turret / riot_baton; Scene weaponId only
+- Soft-clip unchanged; cache stays ?v=vibe-match1
