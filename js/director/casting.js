@@ -221,9 +221,16 @@ export function modulateCast(base, opts = {}) {
       suppressDropCast: !!speechLike,
       suppressChorusWiden: true,
       aggressionExpire: true,
-      archetype: 'tableau_figure',
-      characterId: 'path_walker_dawn',
-      outfitId: 'linen_dawn'
+      archetype: (dom.ladder === 'aggressive' || dom.family === 'chaotic') ? 'chaos_fracture'
+        : (dom.ladder === 'warm' || dom.family === 'warm') ? 'fg_performer'
+        : (dom.family === 'peaceful' || dom.ladder === 'peaceful') ? 'pastoral_walker'
+        : 'tableau_figure',
+      characterId: (dom.ladder === 'aggressive' || dom.family === 'chaotic') ? 'scatter_runners'
+        : (dom.ladder === 'warm' || dom.family === 'warm') ? 'mic_stand_lead'
+        : 'path_walker_dawn',
+      outfitId: (dom.ladder === 'aggressive' || dom.family === 'chaotic') ? 'fracture_rag'
+        : (dom.ladder === 'warm' || dom.family === 'warm') ? 'after_hours_red'
+        : 'linen_dawn'
     };
   }
 
@@ -377,7 +384,8 @@ export function modulateCast(base, opts = {}) {
   result = applyVibeToCast(result, dom, {
     sectionType,
     intensify,
-    allowBeast: dom.family === 'chaotic'
+    allowBeast: dom.family === 'chaotic' || dom.ladder === 'aggressive',
+    energy: audio?.energy || 0
   });
   // Re-clamp after vibe pass
   if (!KINDS.has(result.kind)) result.kind = 'silhouette';
@@ -389,6 +397,8 @@ export function modulateCast(base, opts = {}) {
 
   // Cast library: archetype + character + outfit (WHO); lyric action stays WHAT
   try {
+    const vocalFocus = !!opts.vocalFocus
+      || ((audio?.roles?.vocalish ?? audio?.roles?.lead ?? 0) >= 0.42);
     const lib = resolveLibraryCast({
       dom,
       sectionType,
@@ -401,7 +411,8 @@ export function modulateCast(base, opts = {}) {
       holdSilent: result.holdSilent,
       count: result.count,
       opacity: result.opacity,
-      scale: result.scale
+      scale: result.scale,
+      vocalFocus
     });
     result.archetype = lib.archetype;
     result.characterId = lib.characterId;

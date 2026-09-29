@@ -219,19 +219,47 @@ const CHORUS_ARCHETYPES = ['formation_crew', 'neon_runner', 'pop_candy', 'fg_per
  */
 export function pickArchetype(dom, opts = {}) {
   const family = dom?.family || 'neutral';
-  const speechLike = !!dom?.speechLike;
+  const ladder = dom?.ladder || family;
+  const speechLike = !!dom?.speechLike || ladder === 'spoken';
   const sec = opts.sectionType || 'verse';
   const afterGate = !!opts.afterGate;
+  const aggressive = ladder === 'aggressive' || family === 'chaotic' || !!dom?.aggressive;
 
-  if (speechLike || family === 'spoken') return 'spoken_intimate';
+  if (speechLike || family === 'spoken' || ladder === 'spoken') return 'spoken_intimate';
 
-  if (family === 'peaceful') {
+  // Aggressive ladder ALWAYS fractures — never pastoral/neon meadow cast
+  // Vocalist hub: fg_performer lead silhouette (not fauna/crowd) when vocal focus —
+  // still chaos_fracture on full aggressive swarm sections, but verse/pre prefer fg lead.
+  const vocalFocus = !!opts.vocalFocus;
+  if (aggressive) {
+    if (afterGate || sec === 'breakdown' || sec === 'outro') return 'ash_survivor';
+    if (vocalFocus && (sec === 'verse' || sec === 'pre' || sec === 'intro')) return 'fg_performer';
+    return 'chaos_fracture';
+  }
+  if (vocalFocus && !speechLike && family !== 'peaceful' && ladder !== 'peaceful' && family !== 'scary') {
+    // Lead silhouette over fauna/crowd when vocalish owns the frame
+    if (sec === 'chorus' && family === 'warm') return 'fg_performer';
+    if (sec !== 'breakdown' && sec !== 'drop') return 'fg_performer';
+  }
+
+  if (family === 'peaceful' || ladder === 'peaceful') {
     if (sec === 'chorus') return 'pastoral_walker'; // no formation spam on peace
     if (sec === 'outro') return 'cosmic_dissolve';
     return opts.preferFauna ? 'nature_fauna' : 'pastoral_walker';
   }
-  if (family === 'scary') {
+  if (family === 'scary' || ladder === 'scary') {
     return sec === 'chorus' ? 'void_presence' : 'dread_sparse';
+  }
+  if (family === 'warm' || ladder === 'warm') {
+    // Groove traveler / performer — chorus may widen to formation
+    if (sec === 'chorus') return opts.heroic === 'pop' ? 'pop_candy' : 'fg_performer';
+    if (sec === 'outro') return 'neon_runner';
+    return 'neon_runner';
+  }
+  if (family === 'tense' || ladder === 'tense') {
+    // Braced tableau — not pastoral, not chaos swarm
+    if (sec === 'chorus' || sec === 'drop') return 'fg_performer';
+    return 'tableau_figure';
   }
   if (family === 'chaotic') {
     if (afterGate || sec === 'breakdown' || sec === 'outro') return 'ash_survivor';
@@ -386,14 +414,23 @@ export function resolveLibraryCast(opts = {}) {
   else if (/candy|pop|happy/.test(pf)) heroic = 'pop';
   else if (/stage|perform|club/.test(pf)) heroic = 'fg';
 
-  const archetypeId = pickArchetype(dom, { sectionType, afterGate, heroic });
+  const archetypeId = pickArchetype(dom, {
+    sectionType, afterGate, heroic,
+    vocalFocus: !!opts.vocalFocus
+  });
   // Spoken LOCK — never formation upgrade
   let lockedArchetype = (dom?.speechLike || dom?.family === 'spoken')
     ? 'spoken_intimate'
     : archetypeId;
-  // HOLD: neon/highway packs always foreground traveler (neon_runner) — verse single, chorus same heroic
-  if (heroic === 'neon' && lockedArchetype !== 'spoken_intimate') {
+  // HOLD: neon/highway packs → neon_runner — BUT never override aggressive ladder cast
+  const ladderAgg = dom?.ladder === 'aggressive' || dom?.family === 'chaotic' || !!dom?.aggressive;
+  if (heroic === 'neon' && lockedArchetype !== 'spoken_intimate' && !ladderAgg) {
     lockedArchetype = 'neon_runner';
+  }
+  if (ladderAgg && lockedArchetype !== 'ash_survivor') {
+    lockedArchetype = (opts.afterGate || sectionType === 'breakdown' || sectionType === 'outro')
+      ? 'ash_survivor'
+      : 'chaos_fracture';
   }
 
   const character = pickCharacter(lockedArchetype, {
@@ -986,24 +1023,35 @@ export function weaponsAllowed(opts = {}) {
     conceptId = null,
     preset = null,
     speechLike = false,
-    lyricIrony = false
+    lyricIrony = false,
+    ladder = null,
+    aggression = 0,
+    genreFamily = null,
+    genreWeaponsAllowed = null
   } = opts;
 
-  // Forbidden families — irony override is 1-phrase max (caller sets lyricIrony)
-  if (speechLike || vibeFamily === 'spoken') return false;
+  const L = String(ladder || vibeFamily || 'neutral');
+  const softGenre = /folk|ambient|gospel|classical|spoken|rnb|jazz/.test(String(genreFamily || ''));
+  // Soft/peaceful/spoken / soft ballad — NEVER (Music BRIEF vocalist-weapons)
+  if (speechLike || vibeFamily === 'spoken' || L === 'spoken' || L === 'peaceful') return false;
   if (vibeFamily === 'peaceful' || FORBID_WEAPON_ARCH.has(archetype)) {
     return !!(lyricIrony && CONFLICT_CONCEPTS.has(conceptId));
   }
+  if (softGenre && (aggression || 0) < 0.55 && L !== 'aggressive') return false;
+  if (genreWeaponsAllowed === false && L !== 'aggressive' && (aggression || 0) < 0.6) return false;
+  // Never neon-meadow + rifle
+  if (/meadow|candy|gospel_light|country_porch|neon_highway/.test(String(preset || ''))) return false;
 
-  const archOk = WEAPON_ARCH.has(archetype);
-  const vibeOk = vibeFamily === 'chaotic' || vibeFamily === 'scary';
+  const archOk = WEAPON_ARCH.has(archetype) || archetype === 'fg_performer';
+  const vibeOk = vibeFamily === 'chaotic' || vibeFamily === 'scary'
+    || L === 'aggressive' || L === 'scary' || (aggression || 0) >= 0.55;
   const packOk = WAR_PACKS.has(String(packFamily || '').toLowerCase())
     || WAR_PRESETS.has(String(preset || '').toLowerCase())
-    || /war|chaos|apocalypse|fracture/.test(String(packFamily || ''))
-    || /apocalyptic_warzone|reality_fracture/.test(String(preset || ''));
+    || /war|chaos|apocalypse|fracture|metal/.test(String(packFamily || ''))
+    || /apocalyptic_warzone|reality_fracture|metal_hall|red_void/.test(String(preset || ''));
   const lyricOk = CONFLICT_CONCEPTS.has(conceptId);
 
-  // Need (chaos/scary vibe OR lyric conflict OR war pack) on a war-capable body/pack
+  // Earned: (aggression/chaos high OR lyric/concept war) on war-capable body/pack
   if (!(archOk || packOk || lyricOk)) return false;
   return !!(vibeOk || packOk || lyricOk);
 }
@@ -1170,36 +1218,70 @@ export function applyDanceIntent(members, cast = {}, opts = {}) {
     chorusRepeat = 1,
     afterGate = false,
     roles = null,
-    archetype = null
+    archetype = null,
+    ladder = null,
+    aggression = 0,
+    energy = null
   } = opts;
 
   const family = String(vibeFamily || 'neutral');
+  const L = String(ladder || family || 'neutral');
   const bias = String(danceBias || 'mid');
   const arch = String(archetype || cast.archetype || '');
+  const energyN = typeof energy === 'number' ? energy : intensity;
+  const aggN = typeof aggression === 'number' ? aggression : 0;
+  const aggressive = L === 'aggressive' || family === 'chaotic' || aggN >= 0.55
+    || arch === 'chaos_fracture' || arch === 'ash_survivor';
+  const warm = L === 'warm' || family === 'warm';
+  const tense = L === 'tense' || family === 'tense';
   // MUSIC-BRIEF cast-detail: never force dance on pastoral / sacred / spoken
   const antiDanceArch = arch === 'pastoral_walker' || arch === 'sacred_solitary'
     || arch === 'nature_fauna' || arch === 'spoken_intimate' || arch === 'cosmic_dissolve';
-  const freeze = speechLike || family === 'spoken' || family === 'scary';
-  const pastoral = family === 'peaceful' || bias === 'low' || antiDanceArch;
+  const freeze = speechLike || family === 'spoken' || family === 'scary' || L === 'spoken' || L === 'scary';
+  const pastoral = (!aggressive && (family === 'peaceful' || L === 'peaceful' || bias === 'low' || antiDanceArch));
   // Mid R&B/soul/jazz pocket → sway (bias mid, not high club)
-  const softPocket = !freeze && !pastoral && bias === 'mid'
+  const softPocket = !freeze && !pastoral && !aggressive && bias === 'mid'
     && (sectionType === 'verse' || sectionType === 'pre' || sectionType === 'bridge');
   const danceWins = !freeze && !pastoral && (
-    bias === 'high'
+    aggressive
+    || warm
+    || bias === 'high'
     || (bias !== 'low' && (sectionType === 'chorus' || family === 'chaotic' || /euphoric|groove|club/.test(family)))
   );
 
-  // Base intent for the cast hub
+  // Base intent for the cast hub — ladder maps motion (CEO spin/orbit/travel)
   let danceIntent = 'still';
   let danceEnergy = 0.15;
   if (freeze) {
-    // spoken / scary / ballad confession — still or micro-sway
+    // spoken / scary — still or micro-sway; NO spin thrash
     danceIntent = speechLike ? 'sway' : 'still';
     danceEnergy = speechLike ? 0.18 : 0.08;
   } else if (pastoral) {
-    // pastoral / sacred: walk or soft sway only — never freestyle/formation
+    // pastoral / sacred: walk or soft sway only — never freestyle/spin
     danceIntent = sectionType === 'chorus' ? 'sway' : 'walk';
     danceEnergy = sectionType === 'chorus' ? 0.28 : 0.22;
+  } else if (aggressive) {
+    // High aggression/energy → spin (orbit camera paired in scenePlan); travel path ok
+    const hi = energyN >= 0.55 || aggN >= 0.55 || sectionType === 'drop' || sectionType === 'chorus';
+    if (hi) {
+      danceIntent = 'spin';
+      danceEnergy = Math.min(1, 0.55 + intensity * 0.35 + aggN * 0.2);
+    } else {
+      danceIntent = 'freestyle';
+      danceEnergy = Math.min(1, 0.4 + intensity * 0.25);
+    }
+  } else if (warm) {
+    // Warm groove — freestyle/sway + light travel, not warzone spin
+    if (sectionType === 'chorus') {
+      danceIntent = bias === 'high' ? 'freestyle' : 'groove';
+      danceEnergy = Math.min(1, 0.45 + intensity * 0.3);
+    } else {
+      danceIntent = 'sway';
+      danceEnergy = 0.32;
+    }
+  } else if (tense) {
+    danceIntent = sectionType === 'chorus' ? 'step' : 'walk';
+    danceEnergy = sectionType === 'chorus' ? 0.38 : 0.28;
   } else if (softPocket) {
     danceIntent = 'sway';
     danceEnergy = 0.32;
@@ -1309,7 +1391,13 @@ function _archetypeOutfitWedge(archetype, vibeFamily, sectionType) {
   const fam = String(vibeFamily || 'neutral');
   const chorus = sectionType === 'chorus' || sectionType === 'drop';
   // fg_performer / pop_candy → sharp jacket / candy coat flare
-  if (arch === 'fg_performer') return chorus ? 'stage_gloss' : 'after_hours_red';
+  // Genre lean (MUSIC-BRIEF vocalist-weapons): metal torn / pop jacket / folk cloak
+  if (arch === 'fg_performer') {
+    if (fam === 'chaotic' || fam === 'aggressive') return chorus ? 'ember_coat' : 'fracture_rag';
+    if (fam === 'peaceful') return chorus ? 'linen_dawn' : 'moss_trail';
+    if (fam === 'spoken' || fam === 'scary') return 'room_clothes';
+    return chorus ? 'stage_gloss' : 'after_hours_red';
+  }
   if (arch === 'pop_candy') return chorus ? 'stage_gloss' : 'chrome_candy';
   if (arch === 'neon_runner') return chorus ? 'neon_trim' : 'after_hours_red';
   if (arch === 'formation_crew') return chorus ? 'stage_gloss' : 'color_block_crew';
@@ -1374,11 +1462,24 @@ function _resolveOutfitId(cast, opts = {}) {
  * Silhouette-tagged outfits bump to dream (peaceful/spoken) or neon (groove) — never
  * force one neon look for every cast (cast-detail wave).
  */
-function _readableStyleForOutfit(outfitId, sparseMood, vibeFamily, existingStyle) {
+function _readableStyleForOutfit(outfitId, sparseMood, vibeFamily, existingStyle, ladder = null) {
+  const L = String(ladder || vibeFamily || '');
+  const aggressive = L === 'aggressive' || L === 'chaotic';
+  const candy = /stage_gloss|chrome_candy|color_block_crew|neon_trim/.test(String(outfitId || ''));
+  const ashOutfit = /fracture_rag|industrial_hazard|ember_coat|dread_coat|pale_void|threshold/.test(String(outfitId || ''));
   const fromOutfit = OUTFITS[outfitId]?.style;
+  // Aggressive: ash/void/harsh readable — kill candy neon + soft dream meadow look
+  if (aggressive) {
+    if (candy) return 'silhouette';
+    if (outfitId === 'ember_coat') return 'neon'; // harsh ember rim OK
+    if (fromOutfit === 'dream') return 'silhouette';
+    if (fromOutfit === 'silhouette' || fromOutfit === 'neon') return fromOutfit;
+    return 'silhouette';
+  }
   if (fromOutfit === 'neon' || fromOutfit === 'dream') return fromOutfit;
   if (existingStyle === 'neon' || existingStyle === 'dream') return existingStyle;
-  if (sparseMood || vibeFamily === 'peaceful' || vibeFamily === 'spoken') return 'dream';
+  if (sparseMood || vibeFamily === 'peaceful' || vibeFamily === 'spoken' || L === 'peaceful' || L === 'spoken') return 'dream';
+  if (L === 'tense' || L === 'scary') return 'silhouette';
   return 'neon';
 }
 
@@ -1393,12 +1494,21 @@ export function ensureCastPresence(cast, opts = {}) {
   const {
     speechLike = false,
     vibeFamily = 'neutral',
-    sectionType = 'verse'
+    sectionType = 'verse',
+    ladder = null,
+    aggression = 0,
+    vocalFocus = false
   } = opts;
+
+  const L = String(ladder || vibeFamily || 'neutral');
+  const aggressive = L === 'aggressive' || L === 'chaotic' || aggression >= 0.55
+    || cast.archetype === 'chaos_fracture' || cast.archetype === 'ash_survivor';
 
   const sparseMood = speechLike
     || vibeFamily === 'scary'
     || vibeFamily === 'spoken'
+    || L === 'scary'
+    || L === 'spoken'
     || cast.archetype === 'dread_sparse'
     || cast.archetype === 'void_presence';
 
@@ -1410,19 +1520,58 @@ export function ensureCastPresence(cast, opts = {}) {
   const hubPresence = 1;
 
   if (cast.kind === 'none' || !cast.kind || cast.kind === 'fauna') {
-    cast.kind = 'traveler';
+    cast.kind = vocalFocus ? 'figure_lone' : 'traveler';
     cast.count = Math.max(1, cast.count || 1);
     cast.action = cast.action && cast.action !== 'dissolve' ? cast.action : 'walk';
   }
+  // VOCALIST shape: hub = fg lead silhouette — not fauna/crowd_ghosts
+  if (vocalFocus && !aggressive) {
+    if (cast.kind === 'fauna' || cast.kind === 'crowd_ghosts' || cast.kind === 'congregation') {
+      cast.kind = 'figure_lone';
+      cast.count = 1;
+    }
+    if (cast.archetype === 'nature_fauna' || cast.archetype === 'formation_crew' || cast.archetype === 'chaos_fracture') {
+      // Keep chaos_fracture when aggressive already handled above; here soft vocal lead
+      if (cast.archetype !== 'chaos_fracture' && cast.archetype !== 'ash_survivor') {
+        cast.archetype = 'fg_performer';
+      }
+    }
+    if (!cast.archetype || cast.archetype === 'pastoral_walker') {
+      cast.archetype = sparseMood ? cast.archetype || 'spoken_intimate' : 'fg_performer';
+    }
+  }
+  if (vocalFocus && aggressive && (cast.kind === 'fauna')) {
+    cast.kind = 'figure_lone';
+    cast.archetype = 'fg_performer';
+  }
 
-  cast.characterId = cast.characterId || (sparseMood ? 'close_confessor' : 'path_walker_dawn');
+  // Kill pastoral/fauna defaults when aggressive ladder is live
+  if (aggressive && (cast.archetype === 'pastoral_walker' || cast.archetype === 'nature_fauna'
+      || !cast.archetype || cast.characterId === 'path_walker_dawn')) {
+    cast.archetype = cast.archetype === 'ash_survivor' ? 'ash_survivor' : 'chaos_fracture';
+    cast.characterId = cast.characterId && cast.characterId !== 'path_walker_dawn'
+      ? cast.characterId
+      : 'scatter_runners';
+    if (!cast.outfitId || cast.outfitId === 'linen_dawn' || cast.outfitId === 'moss_trail' || cast.outfitId === 'stage_gloss') {
+      cast.outfitId = 'fracture_rag';
+    }
+  }
+
+  cast.characterId = cast.characterId || (
+    aggressive ? 'scatter_runners'
+      : sparseMood ? 'close_confessor'
+        : (L === 'warm' ? 'rain_highway_runner' : (L === 'tense' ? 'doorway_pause' : 'path_walker_dawn'))
+  );
   cast.archetype = (cast.archetype === 'nature_fauna' || !cast.archetype)
-    ? (sparseMood ? 'spoken_intimate' : 'fg_performer')
+    ? (aggressive ? 'chaos_fracture' : sparseMood ? 'spoken_intimate' : (L === 'warm' ? 'neon_runner' : 'fg_performer'))
     : cast.archetype;
   // Real outfit from vibe+archetype (not neon-only stage_gloss default)
-  cast.outfitId = _resolveOutfitId(cast, { speechLike, vibeFamily, sectionType });
+  cast.outfitId = _resolveOutfitId(cast, { speechLike, vibeFamily: aggressive ? 'chaotic' : vibeFamily, sectionType });
+  if (aggressive && (/linen_dawn|moss_trail|stage_gloss|chrome_candy|water_gloss/.test(cast.outfitId || ''))) {
+    cast.outfitId = 'fracture_rag';
+  }
   const readableStyle = _readableStyleForOutfit(
-    cast.outfitId, sparseMood, vibeFamily, cast.style
+    cast.outfitId, sparseMood, vibeFamily, cast.style, L
   );
   cast.style = readableStyle;
   cast.placement = 'foreground';
@@ -1518,7 +1667,7 @@ export function ensureCastPresence(cast, opts = {}) {
     if (m === hub || m.roleId === 'vocalish' || m.roleId === 'lead') {
       m.style = readableStyle;
     } else if (!m.style || m.style === 'silhouette') {
-      m.style = _readableStyleForOutfit(m.outfitId, sparseMood, vibeFamily, m.style);
+      m.style = _readableStyleForOutfit(m.outfitId, sparseMood, vibeFamily, m.style, L);
     }
   }
 

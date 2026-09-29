@@ -53,7 +53,7 @@ export class LightingSystem {
     }
   }
 
-  update(audio, emotion, intensity = 0.5) {
+  update(audio, emotion, intensity = 0.5, vibeMatch = null) {
     const c = getMotionComfort();
     // Decay *0.82 → ~300ms visible (>0.02); duty track whiteOut>0.3 ≤~15%/1s
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
@@ -67,6 +67,7 @@ export class LightingSystem {
       this._dutyWindowMs = 1000;
     }
 
+    // Soft-clip whiteOut path UNCHANGED (peakCap + duty gate + muteWhiteOut)
     this.whiteOut *= 0.82;
     if (c.muteWhiteOut) this.whiteOut = 0;
     else if (c.whiteOutPeakCap != null) this.whiteOut = Math.min(this.whiteOut, c.whiteOutPeakCap);
@@ -75,13 +76,54 @@ export class LightingSystem {
     this.pulse *= 0.9;
     this._ledPhase = (this._ledPhase + 0.016) % 1000;
 
+    // Live vibe ladder (prefer Audio vibe.aggression / mode)
+    const vibe = audio?.vibe || {};
+    const vm = vibeMatch || {};
+    const agg = Number(
+      vm.aggression ?? vibe.aggression ?? vibe.aggressive ?? 0
+    );
+    const mode = (vm.mode || vibe.dominant || '').toString().toLowerCase();
+
     // Bloom: comfort ceiling 0.55; lessFlash 0.40; PRM 0.35; artistic 0.72 when comfort off
-    const rawBloom = 0.26 + intensity * 0.38 + (emotion?.hope || 0) * 0.18 + (audio?.treble || 0) * 0.14;
+    // Mood-distinct: peace/spoken → silk bloom; chaos → contrast via pulse (NOT higher whiteOut)
+    let rawBloom = 0.26 + intensity * 0.38 + (emotion?.hope || 0) * 0.18 + (audio?.treble || 0) * 0.14;
+    if (mode === 'peace' || mode === 'spoken') {
+      rawBloom = Math.max(rawBloom, 0.4 + Math.max(vm.peace || 0, vm.spoken || 0, 0.3) * 0.12);
+    } else if (mode === 'scary') {
+      rawBloom *= 0.72; // cold sparse, not silk wash or party bloom
+    } else if (mode === 'tense') {
+      rawBloom = rawBloom * 0.9 + 0.04;
+    } else if (mode === 'chaos' || agg >= 0.55) {
+      // Keep bloom soft-clipped; aggression reads as pulse/contrast elsewhere
+      rawBloom = Math.min(rawBloom, 0.42 + (1 - agg) * 0.08);
+    }
     const bloomCap = c.bloomCap != null ? c.bloomCap : 0.55;
     this.bloom = Math.min(bloomCap, rawBloom);
 
-    if (audio?.beat) this.pulse = Math.max(this.pulse, c.muteKickStrobe ? 0.35 : 0.65);
-    if (audio?.drop > 0.5) this.pulse = Math.max(this.pulse, audio.drop * (c.muteKickStrobe ? 0.35 : 0.7));
+    // Pulse / flash duty by mood (whiteOut still soft-clipped via trigger + peakCap)
+    let beatPulse = c.muteKickStrobe ? 0.35 : 0.65;
+    let dropMul = c.muteKickStrobe ? 0.35 : 0.7;
+    if (mode === 'spoken' || mode === 'peace') {
+      beatPulse *= 0.35;
+      dropMul *= 0.3;
+    } else if (mode === 'scary') {
+      beatPulse *= 0.4; // rare startle, not festival
+      dropMul *= 0.35;
+    } else if (mode === 'tense') {
+      beatPulse *= 0.85;
+      dropMul *= 0.8;
+    } else if (mode === 'chaos' || agg >= 0.55) {
+      beatPulse *= 1 + agg * 0.35;
+      dropMul *= 1 + agg * 0.25;
+    }
+    if (audio?.beat) this.pulse = Math.max(this.pulse, beatPulse);
+    if (audio?.drop > 0.5) this.pulse = Math.max(this.pulse, audio.drop * dropMul);
+
+    // Chaos: brief blackout flicker on harsh wall (contrast, not white bleach)
+    const harshWall = Number(audio?.texture?.harshWall || 0);
+    if ((mode === 'chaos' || agg >= 0.6) && harshWall > 0.55 && (audio?.roles?.harsh || 0) > 0.5) {
+      this.blackout = Math.max(this.blackout, Math.min(0.22, (agg - 0.5) * 0.35));
+    }
 
     return {
       whiteOut: this.whiteOut,
@@ -89,7 +131,9 @@ export class LightingSystem {
       bloom: this.bloom,
       pulse: this.pulse,
       modes: this.modes,
-      ledPhase: this._ledPhase
+      ledPhase: this._ledPhase,
+      vibeMode: mode || null,
+      aggression: agg
     };
   }
 

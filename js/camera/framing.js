@@ -10,11 +10,14 @@
  *   placement: 'sky' | 'mid' | 'foreground'
  * Cast framing prefers staged figure over random shake; psych slice
  * (build→push earns chorus pull, kick-only shake, dutch tension-only).
+ *
+ * Travel pass: intentional pan/dolly/crane wander widened so camera moves
+ * through the frame; punch envelope stays tight for kick/drop crosshair.
  */
 
 /** Soft phone-LED wander limits (pre-scaleMul). Subject stays near crosshair. */
-export const FRAME_MAX_X = 11;
-export const FRAME_MAX_Y = 8;
+export const FRAME_MAX_X = 16;
+export const FRAME_MAX_Y = 11;
 /** Tighter envelope for kick/drop punch so silhouette survives shake. */
 export const PUNCH_MAX_X = 6;
 export const PUNCH_MAX_Y = 4.5;

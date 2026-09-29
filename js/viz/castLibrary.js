@@ -93,8 +93,8 @@ export const OUTFITS = {
   },
   stage_gloss: {
     palette: { fill: 'rgba(16,12,20,0.92)', rim: 'rgba(255,230,180,0.75)', accent: 'rgba(255,200,120,0.55)', shadow: 'rgba(10,8,14,0.55)' },
-    accessories: ['coat', 'trim'],
-    shape: { bodyW: 16.2, bodyH: 48.6, headR: 9.45, lean: 0, torn: 0, cloak: 0 },
+    accessories: ['coat', 'trim', 'mic_stand'],
+    shape: { bodyW: 17.0, bodyH: 49.5, headR: 9.45, lean: 0.08, torn: 0, cloak: 0 },
     rimRoughness: 0.12
   },
   color_block_crew: {
@@ -181,7 +181,7 @@ export const ARCHETYPES = {
   pop_candy: { shapeTweaks: { headR: 1.1, bodyW: 1.05 }, defaultStyle: 'neon', defaultOutfit: 'chrome_candy' },
   formation_crew: { shapeTweaks: { lean: 0.05 }, defaultStyle: 'silhouette', defaultOutfit: 'color_block_crew', formation: true },
   tableau_figure: { shapeTweaks: {}, defaultStyle: 'silhouette', defaultOutfit: 'linen_dawn' },
-  fg_performer: { shapeTweaks: { bodyH: 1.05, bodyW: 1.08 }, defaultStyle: 'silhouette', defaultOutfit: 'stage_gloss' },
+  fg_performer: { shapeTweaks: { bodyH: 1.12, bodyW: 1.18, lean: 0.14 }, defaultStyle: 'silhouette', defaultOutfit: 'stage_gloss' },
   chaos_fracture: { shapeTweaks: { lean: 0.25, torn: 0.6, bodyW: 1.15 }, defaultStyle: 'silhouette', defaultOutfit: 'fracture_rag' },
   ash_survivor: { shapeTweaks: { bodyH: 0.9, lean: 0.04 }, defaultStyle: 'silhouette', defaultOutfit: 'ember_coat' },
   dread_sparse: { shapeTweaks: { bodyH: 0.85, headR: 0.9 }, defaultStyle: 'silhouette', defaultOutfit: 'dread_coat', sparseScale: 0.72 },
@@ -814,6 +814,24 @@ export function applyDanceMotion(opts = {}) {
     motion = 'step';
   }
 
+  // CEO vibe-match: earn SPIN at times when danceIntent/energy peaks (not always).
+  // Spoken/sacred/stillness already returned idle above — never invent spin there.
+  if (motion !== 'spin' && !speechLike && arch !== 'sacred_solitary') {
+    const energy = Math.max(0, Number(opts.energy ?? opts.audioEnergy ?? 0));
+    const arousal = Math.max(0, Number(opts.arousal ?? 0));
+    const earn = Math.max(kick, snare, hats, energy, arousal);
+    const t0 = opts.t || 0;
+    const i0 = opts.i || 0;
+    // Periodic burst windows (~every 2s, ~0.6s open) so spin reads as earned moments
+    const spinGate = Math.sin(t0 * 2.9 + i0 * 1.6) > 0.58 && Math.cos(t0 * 0.95 + i0) > 0.15;
+    const intentDance = !!(intentOn || danceAction || dancerArch || dancerKind);
+    const chorusEarn = section === 'chorus' && earn > 0.4 && intentDance;
+    const peakEarn = intentDance && (earn > 0.62 || (hats > 0.48 && kick > 0.32) || energy > 0.58);
+    if (spinGate && (chorusEarn || peakEarn || intentMotion === 'dance' || intentMotion === 'freestyle')) {
+      motion = 'spin';
+    }
+  }
+
   // Amp: stronger when danceIntent/dance set (phone-readable energy); still soft-clip safe
   let drive = Math.max(kick, snare, hats);
   const intentBoost = !!(danceAction || intentOn || dancerArch || dancerKind);
@@ -855,11 +873,12 @@ export function applyDanceMotion(opts = {}) {
     footR = -footL;
   } else if (motion === 'spin') {
     // Silhouette rotate / mirrored lean sweep — pivot at feet, not full 3D
-    const spinDrive = 0.7 + hats * 0.55 + (section === 'chorus' ? 0.3 : 0);
-    rot = Math.sin(t * 1.9 + i) * amp * 0.38 * spinDrive * Math.min(1.4, gain); // ~±0.2..0.35 rad
-    leanAdd = Math.sin(t * 1.9 + i + Math.PI * 0.5) * amp * 0.2 * spinDrive * gain;
-    hipShift = Math.sin(t * 1.9 + i) * amp * 6.5 * scale * gain;
-    bob = Math.max(0, Math.sin(t * 3.8 + i)) * amp * 3.2 * scale * gain;
+    const energy = Math.max(0, Number(opts.energy ?? opts.audioEnergy ?? 0));
+    const spinDrive = 0.75 + hats * 0.55 + energy * 0.35 + (section === 'chorus' ? 0.35 : 0);
+    rot = Math.sin(t * 2.15 + i) * amp * 0.42 * spinDrive * Math.min(1.45, gain); // readable spin
+    leanAdd = Math.sin(t * 2.15 + i + Math.PI * 0.5) * amp * 0.22 * spinDrive * gain;
+    hipShift = Math.sin(t * 2.15 + i) * amp * 7.2 * scale * gain;
+    bob = Math.max(0, Math.sin(t * 4.2 + i)) * amp * 3.5 * scale * gain;
   }
 
   return { active: true, motion, amp, bob, leanAdd, rot, footL, footR, hipShift, intentBoost };
@@ -871,6 +890,141 @@ export function applyDanceMotion(opts = {}) {
  * @param {{ x: number, baseY: number, scale: number, action?: string, t?: number, i?: number, look: object, opacity?: number }} opts
  * @returns {{ chestY: number, headY: number, fx: number }}
  */
+
+/**
+ * Vocalist / FG performer lead — Scene-stamped cues only.
+ * Triggers: fg_performer arch, vocalish/lead/vocal role, kind performer,
+ * stage_gloss + lead/fg placement, mic_stand accessory, cast role performer/vocal.
+ */
+function _isVocalistLead(opts, look) {
+  const arch = (look?.archetype || opts?.archetype || '').toString().toLowerCase();
+  if (arch === 'fg_performer') return true;
+  const roleId = (opts?.roleId || look?.roleId || '').toString().toLowerCase();
+  if (/^(vocalish|lead|vocal|singer|performer)$/.test(roleId)) return true;
+  if (/vocal|singer|performer/.test(roleId)) return true;
+  const kind = (opts?.kind || '').toString().toLowerCase();
+  if (/performer|vocal|singer/.test(kind)) return true;
+  const castRole = (opts?.castRole || opts?.directiveRole || '').toString().toLowerCase();
+  if (/performer|vocal|singer|lead/.test(castRole)) return true;
+  const outfitId = (look?.outfitId || '').toString().toLowerCase();
+  const placement = (opts?.placement || '').toString().toLowerCase();
+  const acc = look?.accessories || [];
+  if (acc.includes('mic_stand') || acc.includes('mic')) return true;
+  // stage_gloss lead / FG placement (This Is America FG grammar)
+  if (outfitId === 'stage_gloss' && (/foreground|fg|^lead$/.test(placement) || opts?.isLead)) return true;
+  return false;
+}
+
+/**
+ * Bold geometric vocalist silhouette overlays — mic-stand, open chest, raised forearm.
+ * Phone-readable; NEVER face detail (MUSIC-BRIEF-vocalist-weapons).
+ */
+function _drawVocalistSilhouette(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, look, opacity, t, headY, chestY, baseY) {
+  const pal = look.palette || {};
+  const leanPx = lean * 10 * scale;
+  const hw = (bodyW * scale) / 2;
+  const bot = bodyTop + bodyH * scale;
+  const rim = _brightRim(pal.rim || 'rgba(255,230,180,0.85)', 0.82);
+  const accent = pal.accent || rim;
+  const fill = 'rgba(5,6,10,0.94)';
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+
+  // --- OPEN CHEST / JACKET SHOULDERS (wider than body wedge) ---
+  const shoulderY = bodyTop + bodyH * scale * 0.1;
+  const chestFlare = hw * 1.55;
+  ctx.globalAlpha = opacity * 0.75;
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.moveTo(fx - hw * 0.35 + leanPx * 0.3, bodyTop + 2 * scale);
+  ctx.lineTo(fx - chestFlare + leanPx, shoulderY + 10 * scale);
+  ctx.lineTo(fx - hw * 0.15 + leanPx, chestY);
+  ctx.lineTo(fx + hw * 0.15 + leanPx, chestY);
+  ctx.lineTo(fx + chestFlare + leanPx, shoulderY + 10 * scale);
+  ctx.lineTo(fx + hw * 0.35 + leanPx * 0.3, bodyTop + 2 * scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = opacity * 0.95;
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = Math.max(3.2, 4.0 * scale * 0.4);
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // --- RAISED FOREARM (singing lean — geometric thick bar, one side) ---
+  // Right forearm up toward mic / mouth (phone-readable stick arm)
+  const shoulderR = fx + hw * 0.85 + leanPx;
+  const elbowX = fx + hw * 1.35 + leanPx;
+  const elbowY = chestY - 4 * scale;
+  const handRaiseX = fx + hw * 0.55 + leanPx;
+  const handRaiseY = headY + 4 * scale;
+  ctx.globalAlpha = opacity * 0.92;
+  ctx.strokeStyle = rim;
+  ctx.fillStyle = fill;
+  ctx.lineWidth = Math.max(3.4, 4.4 * scale * 0.42);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(shoulderR, shoulderY + 2 * scale);
+  ctx.lineTo(elbowX, elbowY);
+  ctx.lineTo(handRaiseX, handRaiseY);
+  ctx.stroke();
+  // Fist / hand blob near mouth (not a face)
+  ctx.beginPath();
+  ctx.arc(handRaiseX, handRaiseY, 3.2 * scale, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // --- MIC STAND GLYPH (pole + boom + mic head near mouth) ---
+  const standX = fx + hw * 1.05 + leanPx + 2 * scale;
+  const micMouthX = fx + leanPx * 0.35 + 3 * scale;
+  const micMouthY = headY + 3.5 * scale;
+  ctx.globalAlpha = opacity * 0.95;
+  ctx.strokeStyle = accent;
+  ctx.fillStyle = fill;
+  ctx.lineWidth = Math.max(2.8, 3.6 * scale * 0.38);
+  // Base plate
+  ctx.beginPath();
+  ctx.moveTo(standX - 5 * scale, bot);
+  ctx.lineTo(standX + 5 * scale, bot);
+  ctx.stroke();
+  // Vertical pole
+  ctx.beginPath();
+  ctx.moveTo(standX, bot);
+  ctx.lineTo(standX, micMouthY + 6 * scale);
+  ctx.stroke();
+  // Boom arm toward mouth
+  ctx.beginPath();
+  ctx.moveTo(standX, micMouthY + 6 * scale);
+  ctx.lineTo(micMouthX + 4 * scale, micMouthY);
+  ctx.stroke();
+  // Mic head (bold capsule near mouth — silhouette only)
+  ctx.lineWidth = Math.max(2.4, 3.0 * scale * 0.34);
+  ctx.beginPath();
+  ctx.ellipse(micMouthX, micMouthY, 4.2 * scale, 2.6 * scale, -0.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Soft pulse tick on mic (lyric energy hint, soft-clip safe)
+  const pulse = 0.55 + 0.35 * Math.sin((t || 0) * 2.4);
+  ctx.globalAlpha = opacity * 0.35 * pulse;
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.arc(micMouthX, micMouthY, 5.5 * scale, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- STANCE BOOTS wider (open chest foot plant) ---
+  ctx.globalAlpha = opacity * 0.75;
+  ctx.fillStyle = rim;
+  ctx.beginPath();
+  ctx.ellipse(fx - hw * 0.55 + leanPx, bot - 1.5 * scale, 5.2 * scale, 2.6 * scale, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(fx + hw * 0.55 + leanPx, bot - 1.5 * scale, 5.2 * scale, 2.6 * scale, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 export function drawCastFigure(ctx, opts) {
   const look = opts.look || resolveCastLook({});
   const scale0 = Math.max(0.8, Math.min(48, Number(opts.scale) || 1));
@@ -902,6 +1056,9 @@ export function drawCastFigure(ctx, opts) {
     holdSilent: opts.holdSilent,
     vibe: opts.vibe,
     section: opts.section,
+    genreFamily: opts.genreFamily || opts.genre,
+    energy: opts.energy ?? opts.audioEnergy,
+    arousal: opts.arousal,
     t,
     i,
     scale
@@ -913,10 +1070,19 @@ export function drawCastFigure(ctx, opts) {
   const shape = look.shape || {};
   let lean = (shape.lean || 0) + leanExtra + (dance.leanAdd || 0);
   const chaosAsym = look.archetype === 'chaos_fracture' ? 1.15 + (i % 3) * 0.08 : 1;
+  const vocalist = _isVocalistLead(opts, look);
 
   let bodyH = (shape.bodyH || 36);
   let bodyW = (shape.bodyW || 12) * chaosAsym;
   let headR = shape.headR || 7;
+  // Vocalist / FG performer: open-chest + singing lean (phone-readable, not face)
+  if (vocalist) {
+    bodyW *= 1.1;
+    lean += 0.1;
+    if (look.archetype === 'fg_performer' || /vocal|lead|performer/.test((opts.roleId || '').toString().toLowerCase())) {
+      bodyH *= 1.04;
+    }
+  }
   if (action === 'kneel' || action === 'kneeling') bodyH *= 0.68;
 
   let bodyTop = baseY - bodyH * scale;
@@ -1056,6 +1222,11 @@ export function drawCastFigure(ctx, opts) {
   // Bold outfit silhouette diffs (coat/cloak/trim/hood/ember) — phone-readable wedges, no face detail
   _drawOutfitSilhouetteDiffs(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, look, opacity);
 
+  // Vocalist / FG performer silhouette (mic-stand + raised forearm + open chest)
+  if (vocalist && !holdSilent) {
+    _drawVocalistSilhouette(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, look, opacity, t, headY, chestY, baseY);
+  }
+
   // Obscure face (dread)
   if (shape.obscureFace || (look.accessories && look.accessories.includes('obscure'))) {
     ctx.fillStyle = pal.shadow || 'rgba(4,4,8,0.75)';
@@ -1112,7 +1283,7 @@ export function drawCastFigure(ctx, opts) {
   ctx.shadowBlur = 0;
   ctx.restore();
   const handY = chestY + (baseY - chestY) * 0.35;
-  return { chestY, headY, fx, baseY, scale, handY, bodyH: bodyH * scale, dance: dance.active ? dance.motion : 'none' };
+  return { chestY, headY, fx, baseY, scale, handY, bodyH: bodyH * scale, dance: dance.active ? dance.motion : 'none', vocalist: !!vocalist };
 }
 
 
@@ -1120,7 +1291,8 @@ export function drawCastFigure(ctx, opts) {
 /** Weapon ids Visual draws (MUSIC-BRIEF-20260924-2135 + classic props). */
 export const WEAPON_IDS = [
   'blade', 'spear', 'rifle', 'rifle_sil', 'rifle_silhouette', 'staff', 'shield', 'energy_arc',
-  'handgun', 'handgun_beat', 'scope_flash', 'burden_suit', 'ash_aftermath'
+  'handgun', 'handgun_beat', 'scope_flash', 'burden_suit', 'ash_aftermath',
+  'scrap_turret', 'riot_baton'
 ];
 
 /**
@@ -1151,7 +1323,7 @@ export function drawRoleAgentFx(ctx, drawn, opts = {}) {
 
   ctx.save();
 
-  if (roleId === 'vocalish' || roleId === 'lead') {
+  if (roleId === 'vocalish' || roleId === 'lead' || roleId === 'vocal' || roleId === 'performer' || roleId === 'singer') {
     // Chest / mouth glow on lyric figure
     const a = 0.18 + pulse * 0.55;
     ctx.globalAlpha = Math.min(0.85, a);
@@ -1169,6 +1341,15 @@ export function drawRoleAgentFx(ctx, drawn, opts = {}) {
     ctx.beginPath();
     ctx.arc(fx, headY + 2 * scale, 2.2 * scale + pulse * 1.5, 0, Math.PI * 2);
     ctx.fill();
+    // Soft mic-head pulse near mouth (stacks with vocalist silhouette; soft-clip safe)
+    if (drawn.vocalist || arch === 'fg_performer' || pulse > 0.35) {
+      ctx.globalAlpha = 0.2 + pulse * 0.4;
+      ctx.strokeStyle = 'rgba(255,230,180,0.85)';
+      ctx.lineWidth = Math.max(1.6, 2.2 * scale * 0.3);
+      ctx.beginPath();
+      ctx.ellipse(fx + 5 * scale, headY + 3 * scale, 3.5 * scale + pulse * 1.5, 2.2 * scale, -0.2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   } else if (roleId === 'kick') {
     // Foot ground punch
     const a = 0.2 + pulse * 0.6;
@@ -1292,15 +1473,18 @@ export function drawWeaponProp(ctx, drawn, opts = {}) {
   const peaceArch = /pastoral_walker|nature_fauna|spoken_intimate/.test(arch);
   if (peaceArch && !irony) return;
 
-  // Aliases (MUSIC-BRIEF-20260924-2135)
+  // Aliases (MUSIC-BRIEF-20260924-2135 + movie grammar)
   if (wid === 'rifle_sil' || wid === 'rifle_silhouette') wid = 'rifle';
   if (wid === 'energyarc') wid = 'energy_arc';
-  if (wid === 'handgun_beat' || wid === 'handgun') wid = 'handgun';
+  if (wid === 'handgun_beat' || wid === 'pistol') wid = 'handgun';
+  if (wid === 'baton' || wid === 'riot_stick') wid = 'riot_baton';
+  if (wid === 'turret' || wid === 'scrap_gun') wid = 'scrap_turret';
   // scope_flash draws as rifle + optional muzzle tick below
 
   const known = [
     'blade', 'spear', 'rifle', 'staff', 'shield', 'energy_arc',
-    'handgun', 'scope_flash', 'burden_suit', 'ash_aftermath'
+    'handgun', 'scope_flash', 'burden_suit', 'ash_aftermath',
+    'scrap_turret', 'riot_baton'
   ];
   if (!known.includes(wid)) return;
 
@@ -1308,12 +1492,16 @@ export function drawWeaponProp(ctx, drawn, opts = {}) {
   const chestY = drawn.chestY;
   const headY = drawn.headY;
   const baseY = drawn.baseY != null ? drawn.baseY : chestY + 40;
-  const scale = (drawn.scale || 1) * (opts.scaleMul || 1);
+  // Phone-readable prop scale — thicker / larger especially guns for warzone packs
+  const packStr = (opts.packId || opts.worldPack || look.packId || opts.world || '').toString().toLowerCase();
+  const warzone = /warzone|fracture|combat|industrial|chaos|ash/.test(packStr + ' ' + arch);
+  const phoneMul = warzone ? 1.35 : 1.2;
+  const scale = (drawn.scale || 1) * (opts.scaleMul || 1) * phoneMul;
   const style = (opts.style || look.style || 'silhouette').toString().toLowerCase();
   const handY = drawn.handY != null ? drawn.handY : chestY + 8 * scale;
   // Hand bias: right side of body; back = behind for shield/spear carry — no floating stickers
-  const handX = fx + 10 * scale;
-  const backX = fx - 8 * scale;
+  const handX = fx + 11 * scale;
+  const backX = fx - 9 * scale;
 
   const events = opts.events || [];
   const evHit = (name) => {
@@ -1326,48 +1514,50 @@ export function drawWeaponProp(ctx, drawn, opts = {}) {
   const muzzleTick = wid === 'scope_flash' || evHit('scope_flash') || evHit('handgun_beat');
 
   ctx.save();
-  ctx.globalAlpha = Math.max(0.55, Math.min(0.95, opts.opacity != null ? Number(opts.opacity) : 0.88));
+  ctx.globalAlpha = Math.max(0.65, Math.min(0.98, opts.opacity != null ? Number(opts.opacity) : 0.92));
 
   if (style === 'neon') {
-    ctx.strokeStyle = _brightRim((look.palette && look.palette.rim) || 'rgba(80,255,230,0.95)', 0.9);
-    ctx.fillStyle = 'rgba(6,8,12,0.4)';
-    ctx.lineWidth = 2.2 * scale;
+    ctx.strokeStyle = _brightRim((look.palette && look.palette.rim) || 'rgba(80,255,230,0.95)', 0.92);
+    ctx.fillStyle = 'rgba(6,8,12,0.55)';
+    ctx.lineWidth = 3.0 * scale;
     ctx.shadowColor = ctx.strokeStyle;
-    ctx.shadowBlur = 8;
-  } else if (style === 'dream') {
-    ctx.strokeStyle = 'rgba(220,220,255,0.75)';
-    ctx.fillStyle = _ensureFillAlpha('rgba(200,200,230,0.45)', 0.45);
-    ctx.lineWidth = 1.6 * scale;
-    ctx.shadowColor = 'rgba(200,210,255,0.5)';
     ctx.shadowBlur = 10;
+  } else if (style === 'dream') {
+    ctx.strokeStyle = 'rgba(220,220,255,0.85)';
+    ctx.fillStyle = _ensureFillAlpha('rgba(200,200,230,0.5)', 0.5);
+    ctx.lineWidth = 2.4 * scale;
+    ctx.shadowColor = 'rgba(200,210,255,0.55)';
+    ctx.shadowBlur = 12;
   } else {
-    ctx.strokeStyle = 'rgba(230,230,240,0.85)';
-    ctx.fillStyle = 'rgba(5,6,10,0.92)';
-    ctx.lineWidth = 1.8 * scale;
+    // High-contrast silhouette rim — phone distance
+    ctx.strokeStyle = 'rgba(245,245,255,0.95)';
+    ctx.fillStyle = 'rgba(5,6,10,0.95)';
+    ctx.lineWidth = 2.8 * scale;
     ctx.shadowBlur = 0;
   }
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
   if (wid === 'burden_suit') {
     // No gun — heavy isolation rim / shadow on figure (Hurt Locker weight)
     ctx.shadowBlur = 0;
-    ctx.globalAlpha = Math.min(0.75, 0.35 + (opts.opacity != null ? Number(opts.opacity) : 0.7) * 0.4);
-    ctx.strokeStyle = 'rgba(40,36,30,0.85)';
-    ctx.lineWidth = 3.2 * scale;
+    ctx.globalAlpha = Math.min(0.8, 0.4 + (opts.opacity != null ? Number(opts.opacity) : 0.7) * 0.45);
+    ctx.strokeStyle = 'rgba(40,36,30,0.9)';
+    ctx.lineWidth = 4.0 * scale;
     ctx.beginPath();
-    ctx.ellipse(fx, chestY + 2 * scale, 16 * scale, 22 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(fx, chestY + 2 * scale, 18 * scale, 24 * scale, 0, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.globalAlpha = 0.35;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.beginPath();
-    ctx.ellipse(fx, baseY + 2, 20 * scale, 6 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(fx, baseY + 2, 22 * scale, 7 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
-    // Inner weight band across chest
-    ctx.globalAlpha = 0.45;
-    ctx.strokeStyle = 'rgba(60,50,40,0.7)';
-    ctx.lineWidth = 2 * scale;
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = 'rgba(60,50,40,0.75)';
+    ctx.lineWidth = 2.6 * scale;
     ctx.beginPath();
-    ctx.moveTo(fx - 12 * scale, chestY);
-    ctx.lineTo(fx + 12 * scale, chestY);
+    ctx.moveTo(fx - 14 * scale, chestY);
+    ctx.lineTo(fx + 14 * scale, chestY);
     ctx.stroke();
     ctx.shadowBlur = 0;
     ctx.restore();
@@ -1377,158 +1567,216 @@ export function drawWeaponProp(ctx, drawn, opts = {}) {
   if (wid === 'ash_aftermath') {
     // Discarded broken glyph near feet (not floating)
     ctx.shadowBlur = 0;
-    const gx = fx + 14 * scale;
+    const gx = fx + 16 * scale;
     const gy = baseY - 3 * scale;
-    ctx.globalAlpha = 0.55;
-    ctx.strokeStyle = 'rgba(180,160,140,0.75)';
-    ctx.fillStyle = 'rgba(30,24,18,0.7)';
-    ctx.lineWidth = 1.4 * scale;
-    // Broken L-shape / cracked glyph
+    ctx.globalAlpha = 0.65;
+    ctx.strokeStyle = 'rgba(200,180,150,0.85)';
+    ctx.fillStyle = 'rgba(30,24,18,0.75)';
+    ctx.lineWidth = 2.0 * scale;
     ctx.beginPath();
-    ctx.moveTo(gx - 6 * scale, gy);
-    ctx.lineTo(gx + 4 * scale, gy - 2 * scale);
-    ctx.lineTo(gx + 2 * scale, gy - 8 * scale);
+    ctx.moveTo(gx - 8 * scale, gy);
+    ctx.lineTo(gx + 5 * scale, gy - 2 * scale);
+    ctx.lineTo(gx + 3 * scale, gy - 10 * scale);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(gx - 2 * scale, gy - 1 * scale);
-    ctx.lineTo(gx + 8 * scale, gy + 1 * scale);
+    ctx.moveTo(gx - 3 * scale, gy - 1 * scale);
+    ctx.lineTo(gx + 10 * scale, gy + 1 * scale);
     ctx.stroke();
-    // Ash motes
-    ctx.fillStyle = 'rgba(200,180,150,0.5)';
-    for (let a = 0; a < 3; a++) {
-      ctx.fillRect(gx + (a - 1) * 4 * scale, gy - 4 * scale - a * 2, 1.5, 1.5);
+    ctx.fillStyle = 'rgba(210,190,160,0.55)';
+    for (let a = 0; a < 4; a++) {
+      ctx.fillRect(gx + (a - 1.5) * 4.5 * scale, gy - 5 * scale - a * 2, 2, 2);
     }
     ctx.restore();
     return;
   }
 
   if (wid === 'blade') {
-    // Short blade from hand, angled up
     ctx.beginPath();
     ctx.moveTo(handX, handY);
-    ctx.lineTo(handX + 3 * scale, handY - 22 * scale);
-    ctx.lineTo(handX + 1 * scale, handY - 24 * scale);
-    ctx.lineTo(handX - 2 * scale, handY);
+    ctx.lineTo(handX + 4 * scale, handY - 26 * scale);
+    ctx.lineTo(handX + 1.5 * scale, handY - 28 * scale);
+    ctx.lineTo(handX - 2.5 * scale, handY);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    // Guard
     ctx.beginPath();
-    ctx.moveTo(handX - 4 * scale, handY - 1 * scale);
-    ctx.lineTo(handX + 5 * scale, handY - 1 * scale);
+    ctx.moveTo(handX - 5 * scale, handY - 1 * scale);
+    ctx.lineTo(handX + 6 * scale, handY - 1 * scale);
     ctx.stroke();
   } else if (wid === 'spear') {
-    // Long shaft + tip — back/hand carry
     const sx = handX - 2 * scale;
+    ctx.lineWidth = Math.max(ctx.lineWidth, 3.2 * scale);
     ctx.beginPath();
     ctx.moveTo(sx, baseY - 4 * scale);
-    ctx.lineTo(sx + 2 * scale, headY - 18 * scale);
+    ctx.lineTo(sx + 2 * scale, headY - 20 * scale);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(sx + 2 * scale, headY - 18 * scale);
-    ctx.lineTo(sx - 3 * scale, headY - 10 * scale);
-    ctx.lineTo(sx + 7 * scale, headY - 10 * scale);
+    ctx.moveTo(sx + 2 * scale, headY - 20 * scale);
+    ctx.lineTo(sx - 4 * scale, headY - 11 * scale);
+    ctx.lineTo(sx + 8 * scale, headY - 11 * scale);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
   } else if (wid === 'rifle' || wid === 'scope_flash') {
-    // Simple long rectangle + barrel at hand
-    const rx = handX - 4 * scale;
-    const ry = handY - 2 * scale;
-    ctx.fillRect(rx, ry, 28 * scale, 4 * scale);
-    ctx.strokeRect(rx, ry, 28 * scale, 4 * scale);
+    // Phone-bold long gun at hand — thicker stock + barrel (warzone readable)
+    const rx = handX - 6 * scale;
+    const ry = handY - 3 * scale;
+    const bodyLen = 36 * scale;
+    const bodyH = 6.5 * scale;
+    ctx.fillRect(rx, ry, bodyLen, bodyH);
+    ctx.strokeRect(rx, ry, bodyLen, bodyH);
+    // Barrel
+    ctx.lineWidth = Math.max(2.6, 3.2 * scale);
     ctx.beginPath();
-    ctx.moveTo(rx + 28 * scale, ry + 1 * scale);
-    ctx.lineTo(rx + 34 * scale, ry + 1 * scale);
+    ctx.moveTo(rx + bodyLen, ry + bodyH * 0.35);
+    ctx.lineTo(rx + bodyLen + 12 * scale, ry + bodyH * 0.35);
     ctx.stroke();
+    // Mag well
+    ctx.fillRect(rx + bodyLen * 0.42, ry + bodyH, 5 * scale, 7 * scale);
+    ctx.strokeRect(rx + bodyLen * 0.42, ry + bodyH, 5 * scale, 7 * scale);
     // Stock
     ctx.beginPath();
     ctx.moveTo(rx, ry);
-    ctx.lineTo(rx - 6 * scale, ry + 6 * scale);
+    ctx.lineTo(rx - 9 * scale, ry + 8 * scale);
+    ctx.lineTo(rx - 7 * scale, ry + bodyH + 4 * scale);
+    ctx.lineTo(rx, ry + bodyH);
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
-    // Optional 1-frame muzzle tick (scope_flash / handgun_beat events)
+    // Optic bump
+    ctx.fillRect(rx + bodyLen * 0.55, ry - 3.5 * scale, 8 * scale, 3.5 * scale);
+    ctx.strokeRect(rx + bodyLen * 0.55, ry - 3.5 * scale, 8 * scale, 3.5 * scale);
     if (wid === 'scope_flash' || muzzleTick) {
       ctx.shadowBlur = 0;
-      ctx.globalAlpha = 0.9;
-      ctx.strokeStyle = 'rgba(255,240,200,0.95)';
-      ctx.fillStyle = 'rgba(255,220,140,0.85)';
-      ctx.lineWidth = 1.2 * scale;
-      const mx = rx + 34 * scale;
-      const my = ry + 2 * scale;
+      ctx.globalAlpha = 0.92;
+      ctx.strokeStyle = 'rgba(255,240,200,0.98)';
+      ctx.fillStyle = 'rgba(255,220,140,0.9)';
+      ctx.lineWidth = 1.8 * scale;
+      const mx = rx + bodyLen + 12 * scale;
+      const my = ry + bodyH * 0.4;
       ctx.beginPath();
       ctx.moveTo(mx, my);
-      ctx.lineTo(mx + 6 * scale, my - 3 * scale);
+      ctx.lineTo(mx + 8 * scale, my - 4 * scale);
       ctx.moveTo(mx, my);
-      ctx.lineTo(mx + 7 * scale, my);
+      ctx.lineTo(mx + 9 * scale, my);
       ctx.moveTo(mx, my);
-      ctx.lineTo(mx + 6 * scale, my + 3 * scale);
+      ctx.lineTo(mx + 8 * scale, my + 4 * scale);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(mx + 1 * scale, my, 2.2 * scale, 0, Math.PI * 2);
+      ctx.arc(mx + 1.5 * scale, my, 3.0 * scale, 0, Math.PI * 2);
       ctx.fill();
     }
   } else if (wid === 'handgun') {
-    // Compact pistol outline at hand (This Is America ruthless beat)
+    // Compact pistol — enlarged for phone (This Is America ruthless beat)
     const px = handX;
     const py = handY;
     ctx.beginPath();
     ctx.moveTo(px, py);
-    ctx.lineTo(px + 10 * scale, py - 1 * scale);
-    ctx.lineTo(px + 12 * scale, py + 1 * scale);
-    ctx.lineTo(px + 2 * scale, py + 3 * scale);
+    ctx.lineTo(px + 14 * scale, py - 1.5 * scale);
+    ctx.lineTo(px + 16 * scale, py + 2 * scale);
+    ctx.lineTo(px + 3 * scale, py + 4.5 * scale);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    // Grip down
+    // Grip down (thicker)
     ctx.beginPath();
     ctx.moveTo(px, py);
-    ctx.lineTo(px - 2 * scale, py + 8 * scale);
-    ctx.lineTo(px + 2 * scale, py + 8 * scale);
-    ctx.lineTo(px + 2 * scale, py + 2 * scale);
+    ctx.lineTo(px - 3 * scale, py + 11 * scale);
+    ctx.lineTo(px + 3.5 * scale, py + 11 * scale);
+    ctx.lineTo(px + 3 * scale, py + 3 * scale);
     ctx.closePath();
     ctx.fill();
+    ctx.stroke();
+    // Trigger guard
+    ctx.beginPath();
+    ctx.arc(px + 4 * scale, py + 5 * scale, 3.2 * scale, 0.2, Math.PI - 0.1);
     ctx.stroke();
     if (muzzleTick) {
       ctx.shadowBlur = 0;
-      ctx.globalAlpha = 0.85;
-      ctx.strokeStyle = 'rgba(255,230,180,0.9)';
-      ctx.lineWidth = 1.1 * scale;
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = 'rgba(255,230,180,0.95)';
+      ctx.lineWidth = 1.6 * scale;
       ctx.beginPath();
-      ctx.moveTo(px + 12 * scale, py);
-      ctx.lineTo(px + 17 * scale, py - 2 * scale);
-      ctx.moveTo(px + 12 * scale, py);
-      ctx.lineTo(px + 17 * scale, py + 2 * scale);
+      ctx.moveTo(px + 16 * scale, py);
+      ctx.lineTo(px + 22 * scale, py - 3 * scale);
+      ctx.moveTo(px + 16 * scale, py);
+      ctx.lineTo(px + 22 * scale, py + 3 * scale);
       ctx.stroke();
     }
+  } else if (wid === 'riot_baton') {
+    // Short thick stick from hand — civil chaos without gun fetish
+    const bx = handX;
+    const by = handY;
+    ctx.lineWidth = Math.max(4.0, 5.2 * scale);
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + 4 * scale, by - 22 * scale);
+    ctx.stroke();
+    // Handle bulb
+    ctx.beginPath();
+    ctx.arc(bx, by + 1 * scale, 3.5 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Tip cap
+    ctx.beginPath();
+    ctx.arc(bx + 4 * scale, by - 22 * scale, 2.8 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (wid === 'scrap_turret') {
+    // Fury Road world-function — chunky mounted gun at hip/hand (attached, not sticker)
+    const tx = handX - 2 * scale;
+    const ty = handY + 2 * scale;
+    // Mount plate at hip
+    ctx.fillRect(fx + 4 * scale, chestY + 6 * scale, 10 * scale, 8 * scale);
+    ctx.strokeRect(fx + 4 * scale, chestY + 6 * scale, 10 * scale, 8 * scale);
+    // Barrel housing (L-chunk)
+    ctx.fillRect(tx, ty - 4 * scale, 22 * scale, 9 * scale);
+    ctx.strokeRect(tx, ty - 4 * scale, 22 * scale, 9 * scale);
+    ctx.fillRect(tx + 18 * scale, ty - 2 * scale, 14 * scale, 5 * scale);
+    ctx.strokeRect(tx + 18 * scale, ty - 2 * scale, 14 * scale, 5 * scale);
+    // Support strut to body
+    ctx.lineWidth = Math.max(2.4, 3.0 * scale);
+    ctx.beginPath();
+    ctx.moveTo(fx + 8 * scale, chestY + 10 * scale);
+    ctx.lineTo(tx + 4 * scale, ty);
+    ctx.stroke();
+    // Scrap teeth
+    ctx.beginPath();
+    ctx.moveTo(tx + 2 * scale, ty - 4 * scale);
+    ctx.lineTo(tx + 5 * scale, ty - 8 * scale);
+    ctx.lineTo(tx + 8 * scale, ty - 4 * scale);
+    ctx.stroke();
   } else if (wid === 'staff') {
+    ctx.lineWidth = Math.max(ctx.lineWidth, 3.0 * scale);
     ctx.beginPath();
     ctx.moveTo(handX, baseY - 2 * scale);
-    ctx.lineTo(handX + 1 * scale, headY - 14 * scale);
+    ctx.lineTo(handX + 1 * scale, headY - 16 * scale);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(handX + 1 * scale, headY - 16 * scale, 3.5 * scale, 0, Math.PI * 2);
+    ctx.arc(handX + 1 * scale, headY - 18 * scale, 4.2 * scale, 0, Math.PI * 2);
     ctx.stroke();
   } else if (wid === 'shield') {
-    // Back / offhand oval
     ctx.beginPath();
-    ctx.ellipse(backX, chestY + 4 * scale, 9 * scale, 14 * scale, -0.15, 0, Math.PI * 2);
+    ctx.ellipse(backX, chestY + 4 * scale, 11 * scale, 16 * scale, -0.15, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.beginPath();
-    ctx.ellipse(backX, chestY + 4 * scale, 5 * scale, 9 * scale, -0.15, 0, Math.PI * 2);
+    ctx.ellipse(backX, chestY + 4 * scale, 6 * scale, 10 * scale, -0.15, 0, Math.PI * 2);
     ctx.stroke();
   } else if (wid === 'energy_arc') {
+    ctx.lineWidth = Math.max(ctx.lineWidth, 2.8 * scale);
     ctx.beginPath();
-    ctx.arc(handX + 4 * scale, handY - 8 * scale, 12 * scale, -1.1, 0.6);
+    ctx.arc(handX + 4 * scale, handY - 8 * scale, 14 * scale, -1.1, 0.6);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(handX + 4 * scale, handY - 8 * scale, 8 * scale, -0.9, 0.4);
+    ctx.arc(handX + 4 * scale, handY - 8 * scale, 9 * scale, -0.9, 0.4);
     ctx.stroke();
   }
 
   ctx.shadowBlur = 0;
   ctx.restore();
 }
+
 
 export default {
   ARCHETYPE_IDS,

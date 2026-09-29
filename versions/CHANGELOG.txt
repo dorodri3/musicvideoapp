@@ -255,3 +255,22 @@ Release: RELEASE-20260929-1350.md · LATEST_INTEGRATED updated
 IDLE creatives pending Darrell next direction; Tunnel Ops may continue
 MUSIC-BRIEF cast costume + dance energy (20260929)
 v2-scene-20260930-061724-cast-detail — Scene cast-detail: real outfitId from vibe+archetype (coat/cloak wedges); danceIntent after ensureCastPresence; pastoral/sacred/spoken anti-dance; HOLD-1345 scale≥2.4/2.0 kept; neon-only default softened to OUTFIT neon|dream
+MUSIC-BRIEF vibe-match aggression ladder (20260929)
+v2-audio-vibe-match-20260930-061939 — Audio Pulse: vibe-match aggression (WAVE-20260929)
+v2-worlds-pre-vibe-match-20260930-062000 — Worlds: pre-edit vibe-match (aggressive→chaos packs win over neon)
+v2-audio-vibe-ladder-20260930-062036 — Audio Pulse: aggression ladder warm rung (MUSIC-BRIEF vibe-match)
+MUSIC-BRIEF vibe-match coherence addendum (20260929)
+v2-worlds-vibe-match-20260930-062250 — Worlds vibe-match P0: ladderLeadPresets + aggression/ladder → chaos packs; soft+neon forbidden on metal/aggressive; sectionDefaults by ladder; live repair minGap 9s; metal→chaos pack family
+
+=== v2-camera-travel-orbit-20260930-062340 ===
+Time: 2026-09-30 06:23:40 JST / PT
+Camera: kinetic travel + earned short orbit arcs (CEO keep-adding)
+- js/camera/system.js: stronger pan/dolly/crane/drift travel; energy-scaled travelMul;
+  short orbit arcs (~0.85–1.3s) on drop/build-crest/peak-chorus/energy-rise; cooldown;
+  cast active → travel around subject (x*0.55), intimate zoom biases unchanged;
+  shake=kick+drop only; dutch tension-only; post-whip re-crosshair preserved.
+- js/camera/framing.js: FRAME_MAX_X/Y 11/8 → 16/11 for intentional travel; punch tight.
+Scope: js/camera/* only (+ versions checkpoint). No Visual/Scene/renderer edits.
+node --check: system.js + framing.js OK
+MUSIC-BRIEF vocalist silhouette + earned weapons (20260929)
+v2-scene-20260930-062600-vibe-match — Scene vibe-match: cast bands + sticky 9s + spin/travel + vocalist hub + earned weapons; Worlds packs intact

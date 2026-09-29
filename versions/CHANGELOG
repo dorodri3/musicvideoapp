@@ -35,3 +35,16 @@ Worlds Engine: QA-2129 vibe→pack routing fix
 - Scope: only js/director/scenePlan.js and js/director/vibeCast.js.
 node --check: scenePlan.js + vibeCast.js OK
 v2-scene-20260930-061724-cast-detail — Scene cast-detail: outfitId+danceIntent from vibe+archetype; HOLD-1345 floors
+v2-worlds-vibe-match-20260930-062250 — Worlds vibe-match P0 (ladder packs / metal escapes neon)
+
+=== v2-camera-travel-orbit-20260930-062340 ===
+Time: 2026-09-30 06:23:40 JST / PT
+Camera: kinetic travel + earned short orbit arcs (CEO keep-adding)
+- js/camera/system.js: stronger pan/dolly/crane/drift travel; energy-scaled travelMul;
+  short orbit arcs (~0.85–1.3s) on drop/build-crest/peak-chorus/energy-rise; cooldown;
+  cast active → travel around subject (x*0.55), intimate zoom biases unchanged;
+  shake=kick+drop only; dutch tension-only; post-whip re-crosshair preserved.
+- js/camera/framing.js: FRAME_MAX_X/Y 11/8 → 16/11 for intentional travel; punch tight.
+Scope: js/camera/* only (+ versions checkpoint). No Visual/Scene/renderer edits.
+node --check: system.js + framing.js OK
+v2-scene-20260930-062600-vibe-match — Scene vibe-match: cast bands + sticky 9s + spin/travel + vocalist hub + earned weapons; Worlds packs intact

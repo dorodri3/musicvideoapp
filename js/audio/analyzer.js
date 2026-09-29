@@ -39,8 +39,10 @@ export class AudioAnalyzer {
     this._onsetTimes = []; // for onset-density vibe
     this._rmsVarHist = [];
     this._vibeSmooth = {
-      peaceful: 0.3, chaotic: 0, scary: 0, tense: 0.2, speechLike: 0, nonGroove: 0
+      peaceful: 0.3, chaotic: 0, scary: 0, tense: 0.2, speechLike: 0, nonGroove: 0,
+      aggression: 0.15, arousal: 0.4, warm: 0.2
     };
+    this._harshSustain = 0; // bleach guard — brief spikes OK, sustained harsh soft-caps
     this._textureSmooth = {
       swell: 0, swing: 0, harshWall: 0, ambient: 0,
       pocketKick: 0, sparseAcoustic: 0, fourOnFloor: 0
@@ -93,6 +95,8 @@ export class AudioAnalyzer {
         chaotic: 0, chaos: 0,
         scary: 0, tense: 0.2,
         speechLike: 0, spoken: 0, intimateSpeech: 0, nonGroove: 0,
+        aggression: 0.15, arousal: 0.4, warm: 0.2,
+        ladder: 'peaceful',
         dominant: 'peace'
       },
       texture: {
@@ -383,7 +387,17 @@ export class AudioAnalyzer {
       dropOut *= Math.min(0.15, floor * 0.5);
       roles.pads = Math.max(roles.pads, 0.28);
       roles.lead = Math.max(roles.lead, 0.2);
+      vibe.aggression *= 0.25;
+      vibe.aggressive = vibe.aggression;
+      vibe.chaotic *= 0.35;
+      vibe.chaos = vibe.chaotic;
+      vibe.warm *= 0.5;
+      vibe.dominant = 'spoken';
+      vibe.ladder = 'spoken';
     }
+
+    // Genre-family aggression deepen (rock/noise up; ambient/spoken soft)
+    this._finalizeAggression(vibe, roles, genreFamily, texture);
 
     this.frame = {
       rms, peak, centroid, flux,
@@ -580,15 +594,38 @@ export class AudioAnalyzer {
     if (ctx.silence) peaceful = Math.max(peaceful, 0.55);
     peaceful = clamp(peaceful);
 
-    // Chaotic: high harsh / flux / onset density (+ metal wall; not jazz swing alone)
-    let chaotic = (roles.harsh || 0) * 0.4
-      + fluxN * 0.3
-      + ctx.onsetDensity * 0.35
-      + (roles.hats || 0) * 0.1
-      + (tex.harshWall || 0) * 0.2
-      - (roles.pads || 0) * 0.15
-      - (tex.swing || 0) * 0.15;
+    // Chaotic / aggression: energy + harsh + onsetDensity + kick (WAVE vibe-match)
+    const energyN = Math.min(1, ctx.energy || 0);
+    const dens = ctx.onsetDensity || 0;
+    const kickN = roles.kick || 0;
+    let chaotic = (roles.harsh || 0) * 0.38
+      + fluxN * 0.22
+      + dens * 0.32
+      + kickN * 0.18
+      + energyN * 0.22
+      + (roles.hats || 0) * 0.08
+      + (tex.harshWall || 0) * 0.22
+      - (roles.pads || 0) * 0.18
+      - (tex.ambient || 0) * 0.25
+      - (tex.swing || 0) * 0.12;
     chaotic = clamp(chaotic);
+
+    // Explicit aggression ladder (0..1) for Director / Visual
+    let aggression = (roles.harsh || 0) * 0.32
+      + energyN * 0.28
+      + dens * 0.24
+      + kickN * 0.22
+      + fluxN * 0.12
+      + (tex.harshWall || 0) * 0.18
+      + (ctx.drop || 0) * 0.1
+      - (tex.ambient || 0) * 0.45
+      - (roles.pads || 0) * 0.12;
+    aggression = clamp(aggression);
+
+    // Arousal: energy with kick/onset punch (separate from peace/chaos label)
+    let arousal = energyN * 0.55 + dens * 0.2 + kickN * 0.15 + (roles.bass || 0) * 0.1
+      + aggression * 0.15;
+    arousal = clamp(arousal);
 
     // Scary: low energy + sparse harsh / tense (not full chaos party)
     let scary = (1 - Math.min(1, ctx.energy * 1.6)) * 0.4
@@ -617,19 +654,58 @@ export class AudioAnalyzer {
     speechLike = clamp(speechLike);
     const nonGroove = clamp(speechLike * 0.85 + (1 - Math.min(1, groove * 1.5)) * 0.2);
 
-    // Smooth for director/visual stability
+    // Soft/spoken/ambient stay low aggression (never invent chaos pocket)
+    if (speechLike > 0.4) {
+      aggression *= 1 - speechLike * 0.75;
+      chaotic *= 1 - speechLike * 0.55;
+      arousal *= 1 - speechLike * 0.35;
+    }
+    if ((tex.ambient || 0) > 0.4) {
+      aggression *= 1 - (tex.ambient || 0) * 0.7;
+      chaotic *= 1 - (tex.ambient || 0) * 0.45;
+    }
+    if (ctx.silence) {
+      aggression *= 0.35;
+      chaotic *= 0.4;
+      arousal *= 0.5;
+    }
+    // Mutual: high aggression lifts chaos so dominant routes to chaos packs
+    if (aggression > 0.45) {
+      chaotic = clamp(chaotic + (aggression - 0.45) * 0.55);
+      peaceful = clamp(peaceful * (1 - (aggression - 0.45) * 0.8));
+    }
+    aggression = clamp(aggression);
+    chaotic = clamp(chaotic);
+    arousal = clamp(arousal);
+
+    // Warm / groove (ladder rung 1): steady pocket, mid kick, low harsh — not aggression
+    let warm = groove * 0.45
+      + Math.min(kickN, 0.55) * 0.25
+      + (1 - (roles.harsh || 0)) * 0.2
+      + (1 - Math.abs((arousal || 0) - 0.45)) * 0.1
+      - aggression * 0.55
+      - chaotic * 0.35
+      - peaceful * 0.25
+      - speechLike * 0.3
+      - (tex.ambient || 0) * 0.2;
+    warm = clamp(warm);
+
+    // Smooth for director/visual stability (aggression a bit snappier for rock hits)
     const s = this._vibeSmooth;
     const lerp = (key, target, a = 0.22) => {
-      s[key] = s[key] * (1 - a) + target * a;
+      s[key] = (s[key] ?? target) * (1 - a) + target * a;
       return s[key];
     };
     const out = {
       peaceful: lerp('peaceful', peaceful),
-      chaotic: lerp('chaotic', chaotic),
+      chaotic: lerp('chaotic', chaotic, 0.28),
       scary: lerp('scary', scary),
       tense: lerp('tense', tense),
       speechLike: lerp('speechLike', speechLike),
-      nonGroove: lerp('nonGroove', nonGroove)
+      nonGroove: lerp('nonGroove', nonGroove),
+      aggression: lerp('aggression', aggression, 0.3),
+      arousal: lerp('arousal', arousal, 0.25),
+      warm: lerp('warm', warm, 0.22)
     };
     // VIBE-TAXONOMY-20260924-2125 aliases
     out.calm = out.peaceful;
@@ -637,22 +713,116 @@ export class AudioAnalyzer {
     out.chaos = out.chaotic;
     out.spoken = out.speechLike;
     out.intimateSpeech = out.speechLike;
+    out.aggressive = out.aggression;
 
     // Dominant for Director / Visual routing (congruence first)
     const ranked = [
       ['spoken', out.spoken],
-      ['chaos', out.chaos],
+      ['chaos', Math.max(out.chaos, out.aggression * 0.95)],
       ['scary', out.scary],
       ['peace', out.peace],
-      ['tense', out.tense]
+      ['tense', out.tense],
+      ['warm', out.warm]
     ];
     // Spoken wins when clearly speech-like (never fake a chorus vibe)
     ranked.sort((a, b) => b[1] - a[1]);
     let dominant = ranked[0][0];
-    if (out.spoken > 0.48 && out.spoken >= out.chaos - 0.05) dominant = 'spoken';
-    else if (out.peace > 0.42 && out.chaos < 0.35 && out.scary < 0.4) dominant = 'peace';
+    if (out.spoken > 0.48 && out.spoken >= out.chaos - 0.05 && out.aggression < 0.55) {
+      dominant = 'spoken';
+    } else if (out.aggression > 0.58 && out.aggression >= out.peace) {
+      dominant = 'chaos';
+    } else if (out.scary > 0.5 && out.scary >= out.aggression && out.aggression < 0.5) {
+      dominant = 'scary'; // sibling — not “more aggressive party”
+    } else if (out.peace > 0.42 && out.chaos < 0.35 && out.scary < 0.4 && out.aggression < 0.4) {
+      dominant = 'peace';
+    } else if (out.warm > 0.4 && out.aggression < 0.42 && out.chaos < 0.4) {
+      dominant = 'warm';
+    }
     out.dominant = dominant;
+    out.ladder = this._ladderFromVibe(out);
     return out;
+  }
+
+  /**
+   * MUSIC-BRIEF vibe-match ladder:
+   * peaceful → warm → tense → aggressive/chaos (+ scary sibling) | spoken
+   */
+  _ladderFromVibe(v) {
+    if ((v.spoken || 0) > 0.48 && (v.aggression || 0) < 0.5) return 'spoken';
+    if ((v.aggression || 0) > 0.55 || ((v.chaos || 0) > 0.55 && (v.aggression || 0) > 0.4)) {
+      return 'aggressive';
+    }
+    if ((v.scary || 0) > 0.48 && (v.scary || 0) >= (v.aggression || 0) && (v.aggression || 0) < 0.5) {
+      return 'scary';
+    }
+    if ((v.tense || 0) > 0.48 && (v.aggression || 0) < 0.5) return 'tense';
+    if ((v.warm || 0) > 0.38 && (v.aggression || 0) < 0.42) return 'warm';
+    if ((v.peace || v.peaceful || 0) > 0.4) return 'peaceful';
+    // fallback by dominant
+    const d = v.dominant;
+    if (d === 'chaos') return 'aggressive';
+    if (d === 'peace') return 'peaceful';
+    return d || 'peaceful';
+  }
+
+  /**
+   * Post genreFamily: deepen aggression envelopes (WAVE vibe-match).
+   * Mutates vibe in place. Spoken / ambient stay soft.
+   */
+  _finalizeAggression(vibe, roles, family, texture) {
+    const clamp = (v) => Math.max(0, Math.min(1, v));
+    const fam = family || 'unknown';
+    const tex = texture || {};
+    let agg = vibe.aggression || 0;
+    let chaos = vibe.chaotic || vibe.chaos || 0;
+    let arousal = vibe.arousal || 0;
+
+    if (fam === 'rock' || fam === 'noise') {
+      agg = clamp(agg * 1.25 + 0.08);
+      chaos = clamp(chaos * 1.2 + 0.06);
+      arousal = clamp(arousal * 1.1 + 0.04);
+    } else if (fam === 'electronic' && (tex.fourOnFloor || 0) > 0.4) {
+      // EDM energy ≠ metal aggression — modest lift on drop only
+      agg = clamp(agg * 1.05 + (vibe.tense || 0) * 0.05);
+      arousal = clamp(arousal * 1.12);
+    } else if (fam === 'hiphop') {
+      agg = clamp(agg * 1.08 + (roles.kick || 0) * 0.06);
+      arousal = clamp(arousal * 1.08);
+    } else if (fam === 'classical' || fam === 'gospel' || fam === 'spoken' || fam === 'jazz') {
+      agg *= 0.45;
+      chaos *= 0.55;
+    } else if (fam === 'folk' || fam === 'rnb' || fam === 'indie') {
+      agg *= 0.65;
+    }
+
+    if ((tex.ambient || 0) > 0.45 || (vibe.spoken || 0) > 0.48) {
+      agg *= 0.35;
+      chaos *= 0.4;
+    }
+
+    // Soft folk / ambient anti: never leave aggression high enough to invite warzone
+    if (fam === 'folk' || (tex.sparseAcoustic || 0) > 0.45) {
+      agg = Math.min(agg, 0.35);
+      chaos = Math.min(chaos, 0.3);
+    }
+
+    vibe.aggression = clamp(agg);
+    vibe.aggressive = vibe.aggression;
+    vibe.chaotic = clamp(chaos);
+    vibe.chaos = vibe.chaotic;
+    vibe.arousal = clamp(arousal);
+
+    // Re-pick dominant when aggression clearly owns the frame
+    if ((vibe.spoken || 0) > 0.48 && vibe.aggression < 0.5) {
+      vibe.dominant = 'spoken';
+    } else if (vibe.aggression > 0.58) {
+      vibe.dominant = 'chaos';
+    } else if ((vibe.scary || 0) > 0.5 && vibe.aggression < 0.5) {
+      vibe.dominant = 'scary';
+    } else if ((vibe.warm || 0) > 0.4 && vibe.aggression < 0.42) {
+      vibe.dominant = 'warm';
+    }
+    vibe.ladder = this._ladderFromVibe(vibe);
   }
 
   /**
@@ -792,6 +962,13 @@ export class AudioAnalyzer {
     // Micro-variation: never hold exactly 1.0 (plateau reads frozen)
     for (const k of ['kick', 'bass', 'snare', 'hats', 'pads', 'lead', 'harsh']) {
       if (roles[k] > 0.97) roles[k] = 0.97 - (roles[k] - 0.97) * 0.5;
+    }
+    // Bleach guard (CEO FYI): brief harsh/chaos spikes OK; sustained peaks soft-cap
+    // so Visual isn't forced into white-out that competes with cast/lyrics.
+    this._harshSustain = this._harshSustain * 0.9 + (roles.harsh || 0) * 0.1;
+    if (this._harshSustain > 0.52) {
+      const over = Math.min(1, (this._harshSustain - 0.52) / 0.4);
+      roles.harsh *= 1 - over * 0.38;
     }
   }
 

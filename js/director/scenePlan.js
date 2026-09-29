@@ -23,7 +23,8 @@ import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceInt
 import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js';
 import {
   dominantVibe, vibePackFamily, vibeLeadPresets, vibeForbiddenPresets, genreLeadPresets,
-  inferSpeechLikeFromRoles, readVibe
+  genreForbiddenPresets, ladderLeadPresets, resolveLadder, isAggressiveVibe, ladderStepChanged,
+  inferSpeechLikeFromRoles, readVibe, STICKY_MS, AGGRESSION_THRESH
 } from './vibeCast.js';
 import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js';
 
@@ -147,7 +148,10 @@ const PACK_FAMILIES = {
   // Keep these IDs unique: familyOfPreset uses the first matching family.
   nature: ['meadow_fauna', 'misty_lake', 'forest', 'ocean', 'snow', 'dream_clouds', 'cozy_autumn', 'spoken_word_bed', 'country_porch'],
   scary: ['dark_sparse', 'white_void', 'endless_staircase', 'ancient_ruins', 'snow', 'industrial_tunnel'],
-  chaos: ['reality_fracture', 'apocalyptic_warzone', 'storm', 'red_void', 'industrial_tunnel', 'burning_desert'],
+  chaos: ['reality_fracture', 'apocalyptic_warzone', 'metal_hall', 'storm', 'red_void', 'industrial_tunnel', 'burning_desert'],
+  // Distinct mood families (MUSIC-BRIEF coherence + Worlds vibe-match)
+  groove: ['rainy_city', 'hiphop_block', 'latin_night', 'empty_highway', 'soul_room'],
+  tense: ['industrial_tunnel', 'endless_staircase', 'ancient_ruins', 'storm', 'dark_sparse', 'burning_desert'],
   spoken: ['spoken_word_bed', 'white_void', 'forest', 'ocean', 'dream_clouds', 'misty_lake'],
   // Scene genreFamily → members (lead pack ID first so familyOfPreset resolves)
   intimate: ['soul_room', 'spoken_word_bed', 'dream_clouds', 'misty_lake', 'ocean'],
@@ -499,12 +503,14 @@ export class ScenePlanner {
   _presetsFor(concept, fantasyBoosts, sec, styles, vibeDom = null, genreHint = 'unknown') {
     const dom = vibeDom || this._lastVibeDom;
     const fam = dom?.family;
+    const ladder = dom?.ladder || fam || 'neutral';
     const leads = vibeLeadPresets(dom);
     const list = [];
 
-    // Vibe leads are intentionally first: concept roulette must not put neon
-    // ahead of a peaceful, scary, chaotic, or spoken world.
+    // Vibe/ladder leads first: concept roulette must not put neon ahead of mood world.
     if (leads.length) list.push(...leads);
+    const ladderLeads = ladderLeadPresets(dom?.ladder || resolveLadder(null, { vibe: dom?.vibe }));
+    if (ladderLeads.length) list.unshift(...ladderLeads);
     const genreLeads = genreLeadPresets(genreHint);
     if (genreLeads.length) list.push(...genreLeads);
     if (fantasyBoosts.length) list.push(...fantasyBoosts);
@@ -513,33 +519,79 @@ export class ScenePlanner {
     if (pack?.presets) list.push(...pack.presets);
     if (concept?.presets) list.push(...concept.presets);
 
-    // Neutral plans still put nature ahead of the old neon default.
+    // Distinct section defaults per ladder (MUSIC-BRIEF coherence) — not neon hub.
+    const byLadder = {
+      peaceful: {
+        intro: ['misty_lake', 'forest', 'spoken_word_bed', 'dream_clouds'],
+        verse: ['meadow_fauna', 'misty_lake', 'forest', 'country_porch', 'cozy_autumn'],
+        chorus: ['meadow_fauna', 'misty_lake', 'forest', 'ocean', 'dream_clouds'],
+        outro: ['spoken_word_bed', 'white_void', 'meadow_fauna', 'cozy_autumn']
+      },
+      warm: {
+        intro: ['rainy_city', 'empty_highway', 'soul_room'],
+        verse: ['rainy_city', 'hiphop_block', 'latin_night', 'empty_highway'],
+        chorus: ['rainy_city', 'hiphop_block', 'latin_night', 'stage_pop'],
+        outro: ['soul_room', 'rainy_city', 'empty_highway']
+      },
+      tense: {
+        intro: ['endless_staircase', 'industrial_tunnel', 'ancient_ruins'],
+        verse: ['industrial_tunnel', 'endless_staircase', 'ancient_ruins', 'storm'],
+        chorus: ['storm', 'industrial_tunnel', 'ancient_ruins', 'dark_sparse'],
+        outro: ['dark_sparse', 'ancient_ruins', 'snow']
+      },
+      aggressive: {
+        intro: ['industrial_tunnel', 'metal_hall', 'storm'],
+        verse: ['metal_hall', 'reality_fracture', 'industrial_tunnel', 'storm'],
+        chorus: ['apocalyptic_warzone', 'reality_fracture', 'metal_hall', 'red_void', 'storm'],
+        breakdown: ['reality_fracture', 'apocalyptic_warzone', 'storm', 'red_void'],
+        drop: ['reality_fracture', 'apocalyptic_warzone', 'red_void', 'storm'],
+        outro: ['burning_desert', 'dark_sparse', 'industrial_tunnel']
+      },
+      chaotic: null, // alias → aggressive
+      scary: {
+        intro: ['dark_sparse', 'white_void', 'endless_staircase'],
+        verse: ['dark_sparse', 'white_void', 'endless_staircase', 'ancient_ruins'],
+        chorus: ['dark_sparse', 'endless_staircase', 'white_void', 'industrial_tunnel'],
+        outro: ['white_void', 'dark_sparse', 'snow']
+      },
+      spoken: {
+        intro: ['spoken_word_bed', 'white_void', 'soul_room'],
+        verse: ['spoken_word_bed', 'soul_room', 'white_void', 'forest'],
+        chorus: ['spoken_word_bed', 'white_void', 'misty_lake'],
+        outro: ['spoken_word_bed', 'white_void', 'soul_room']
+      }
+    };
+    const ladderKey = ladder === 'chaotic' ? 'aggressive' : ladder;
+    const ladderDefaults = byLadder[ladderKey];
     const sectionDefaults = {
-      intro: ['spoken_word_bed', 'white_void', 'dream_clouds', 'misty_lake', 'neon_highway'],
-      verse: ['meadow_fauna', 'forest', 'misty_lake', 'cozy_autumn', 'neon_highway', 'empty_highway'],
-      pre: ['endless_staircase', 'storm', 'industrial_tunnel', 'neon_highway'],
-      chorus: ['meadow_fauna', 'misty_lake', 'forest', 'cozy_autumn', 'neon_highway', 'candy_happy', 'cathedral_space'],
+      intro: ['spoken_word_bed', 'white_void', 'dream_clouds', 'misty_lake', 'rainy_city'],
+      verse: ['rainy_city', 'forest', 'misty_lake', 'empty_highway', 'industrial_tunnel'],
+      pre: ['endless_staircase', 'storm', 'industrial_tunnel', 'rainy_city'],
+      chorus: ['rainy_city', 'misty_lake', 'forest', 'storm', 'cathedral_space'],
       bridge: ['misty_lake', 'ancient_ruins', 'cozy_autumn', 'snow'],
       breakdown: ['reality_fracture', 'dark_sparse', 'apocalyptic_warzone', 'storm'],
       drop: ['reality_fracture', 'apocalyptic_warzone', 'storm', 'red_void'],
-      outro: ['spoken_word_bed', 'white_void', 'meadow_fauna', 'cozy_autumn', 'dream_clouds']
+      outro: ['spoken_word_bed', 'white_void', 'cozy_autumn', 'dream_clouds']
     };
     let defaults = sectionDefaults[sec.type] || sectionDefaults.verse;
-    if (fam === 'peaceful') {
-      defaults = sec.type === 'chorus'
-        ? ['meadow_fauna', 'misty_lake', 'forest', 'ocean', 'cozy_autumn', 'dream_clouds']
-        : sec.type === 'verse'
-          ? ['meadow_fauna', 'misty_lake', 'forest', 'cozy_autumn', 'ocean', 'snow']
-          : defaults;
+    if (ladderDefaults) {
+      defaults = ladderDefaults[sec.type]
+        || ladderDefaults.verse
+        || defaults;
     }
     list.push(...defaults);
 
     const styleList = Array.isArray(styles) ? styles : [];
     if (styleList.includes('horror')) list.unshift('dark_sparse', 'red_void', 'apocalyptic_warzone');
-    if (styleList.includes('sci-fi')) list.unshift('futuristic_city', 'space', 'neon_highway');
+    if (styleList.includes('sci-fi') && ladderKey !== 'aggressive' && ladderKey !== 'peaceful') {
+      list.unshift('futuristic_city', 'space');
+    }
     if (styleList.includes('mythological')) list.unshift('ancient_ruins', 'cathedral_space');
 
-    const forbidden = new Set(vibeForbiddenPresets(dom));
+    const forbidden = new Set([
+      ...vibeForbiddenPresets(dom),
+      ...genreForbiddenPresets(genreHint)
+    ]);
     const seen = new Set();
     return list
       .map(p => this._normalizePreset(p))
@@ -758,18 +810,26 @@ export class ScenePlanner {
           opacity: cast.opacity,
           scale: cast.scale
         });
-        cast.archetype = lib.archetype || cast.archetype || 'pastoral_walker';
+        const _L = dom?.ladder || dom?.family || 'neutral';
+        const _agg = _L === 'aggressive' || dom?.family === 'chaotic' || !!dom?.aggressive;
+        const _soft = _L === 'peaceful' || !!dom?.speechLike;
+        const _fbArch = _agg ? 'chaos_fracture' : _L === 'scary' ? 'dread_sparse' : _soft ? 'pastoral_walker'
+          : _L === 'warm' ? 'fg_performer' : _L === 'tense' ? 'tableau_figure' : 'fg_performer';
+        const _fbOutfit = _agg ? 'fracture_rag' : _L === 'scary' ? 'dread_coat' : _soft ? 'linen_dawn'
+          : _L === 'warm' ? 'after_hours_red' : 'highway_dust';
+        cast.archetype = lib.archetype || cast.archetype || _fbArch;
         cast.characterId = lib.characterId || cast.characterId;
-        cast.outfitId = lib.outfitId || cast.outfitId || 'linen_dawn';
-        cast.style = lib.style || cast.style || 'silhouette';
+        cast.outfitId = lib.outfitId || cast.outfitId || _fbOutfit;
+        cast.style = lib.style || cast.style || (_agg || _L === 'tense' || _L === 'scary' ? 'silhouette' : (_soft ? 'dream' : 'neon'));
         cast.label = lib.label || cast.label;
         cast.members = (Array.isArray(lib.members) && lib.members.length)
           ? lib.members
           : null;
       } catch (_) {
-        cast.archetype = cast.archetype || 'pastoral_walker';
+        const _agg2 = (dom?.ladder === 'aggressive' || dom?.family === 'chaotic');
+        cast.archetype = cast.archetype || (_agg2 ? 'chaos_fracture' : 'fg_performer');
         cast.characterId = cast.characterId || null;
-        cast.outfitId = cast.outfitId || 'linen_dawn';
+        cast.outfitId = cast.outfitId || (_agg2 ? 'fracture_rag' : 'highway_dust');
         cast.style = cast.style || 'silhouette';
         cast.members = null;
       }
@@ -777,9 +837,11 @@ export class ScenePlanner {
       // Guarantee ≥1 drawable member when kind≠none
       if (!Array.isArray(cast.members) || cast.members.length === 0) {
         const kind = cast.kind === 'none' ? 'traveler' : cast.kind;
-        cast.characterId = cast.characterId || 'path_walker_dawn';
-        cast.outfitId = cast.outfitId || 'linen_dawn';
-        cast.archetype = cast.archetype || 'pastoral_walker';
+        const _agg3 = (dom?.ladder === 'aggressive' || dom?.family === 'chaotic');
+        const _soft3 = (dom?.ladder === 'peaceful' || !!dom?.speechLike);
+        cast.characterId = cast.characterId || (_agg3 ? 'scatter_runners' : _soft3 ? 'path_walker_dawn' : 'mic_stand_lead');
+        cast.outfitId = cast.outfitId || (_agg3 ? 'fracture_rag' : _soft3 ? 'linen_dawn' : 'after_hours_red');
+        cast.archetype = cast.archetype || (_agg3 ? 'chaos_fracture' : _soft3 ? 'pastoral_walker' : 'fg_performer');
         cast.members = [{
           characterId: cast.characterId,
           outfitId: cast.outfitId,
@@ -842,7 +904,12 @@ export class ScenePlanner {
           sectionType: secType,
           afterGate: secType === 'breakdown' || secType === 'drop',
           speechLike,
-          stickyWeaponId: sameSection ? stickyW : null
+          stickyWeaponId: sameSection ? stickyW : null,
+          ladder: dom?.ladder || null,
+          aggression: dom?.aggression ?? dom?.vibe?.aggression ?? audio?.vibe?.aggression ?? 0,
+          genreFamily: this.narrative.getGenreFamily?.() || null,
+          genreWeaponsAllowed: getGenreFamily(this.narrative.getGenreFamily?.() || '')?.weaponsAllowed,
+          preset: this.currentPreset || null
         });
         const hubW = cast.members.find(m => m.weaponId && m.weaponId !== 'none')?.weaponId
           || cast.members[0]?.weaponId
@@ -876,18 +943,29 @@ export class ScenePlanner {
     }
 
     // P0 QA-2142/2149/1345 — ≥1 large FG hub EVERY frame (resurrects kind none)
+    const liveRolesEns = roles || this._rolesIntents(audio, vocal);
+    const vocalFocus = !!(
+      (liveRolesEns?.vocalish ?? liveRolesEns?.lead ?? 0) >= 0.42
+      || (audio?.roles?.vocalish ?? audio?.roles?.lead ?? 0) >= 0.42
+      || vocal?.focus
+    );
+    const ladderNow = dom?.ladder || (this._lastVibeDom || {}).ladder || 'neutral';
+    const aggNow = (dom?.aggression ?? dom?.vibe?.aggression ?? audio?.vibe?.aggression ?? 0);
     ensureCastPresence(cast, {
       speechLike,
       vibeFamily: dom.family || (this._lastVibeDom || {}).family || 'neutral',
-      sectionType: secType
+      sectionType: secType,
+      ladder: ladderNow,
+      aggression: aggNow,
+      vocalFocus
     });
 
     // DANCE after presence floors — stamp danceIntent/dance on final hub+members
-    // (MUSIC-BRIEF cast-detail: high kick/groove/chorus → dance; pastoral/sacred/spoken → sway/still)
+    // ladder aggressive → spin/travel; warm → freestyle; peaceful/spoken/scary → no spin
     if (cast.kind !== 'none' && Array.isArray(cast.members) && cast.members.length) {
       const gFamDance = getGenreFamily(this.narrative.getGenreFamily?.() || '') || null;
       const danceBias = gFamDance?.danceBias || (speechLike ? 'low' : 'mid');
-      const liveRoles = roles || this._rolesIntents(audio, vocal);
+      const liveRoles = liveRolesEns;
       cast.members = applyDanceIntent(cast.members, cast, {
         sectionType: secType,
         speechLike,
@@ -897,7 +975,10 @@ export class ScenePlanner {
         chorusRepeat,
         afterGate: secType === 'breakdown' || secType === 'drop',
         roles: liveRoles,
-        archetype: cast.archetype
+        archetype: cast.archetype,
+        ladder: ladderNow,
+        aggression: aggNow,
+        energy: audio?.energy || 0
       });
     }
 
@@ -1022,16 +1103,48 @@ export class ScenePlanner {
         this.narrative.setPackFamily(fam);
       }
     }
+    // Metal / aggressive ladder → prefer chaos pack (escape neon hub)
+    if (!speechLike) {
+      const gh = String(audio?.genreHint || '').toLowerCase();
+      const gf = String(audio?.genreFamily || '').toLowerCase();
+      const ladder = String(audio?.vibe?.ladder || vibeDom?.ladder || '').toLowerCase();
+      if (gh === 'metal' || gf === 'rock_metal' || gf === 'metal' || ladder === 'aggressive') {
+        const cur = this.narrative.getPackFamily();
+        if (!cur || cur === 'nature' || cur === 'stage_pop' || cur === 'street_block' || cur === 'neon' || cur === 'groove') {
+          this.narrative.setPackFamily('chaos');
+        }
+      }
+    }
+    // Cast identity stickiness: clear only on earned ladder step change (verse→chorus keeps WHO)
+    {
+      const ladderNow = String(audio?.vibe?.ladder || vibeDom?.ladder || '').toLowerCase();
+      if (ladderStepChanged(this._lastLadder, ladderNow)) {
+        try {
+          if (typeof this.narrative.clearCastIdentity === 'function') this.narrative.clearCastIdentity();
+          else if (this.narrative.world) this.narrative.world.castIdentity = null;
+        } catch (_) { /* soft */ }
+      }
+      this._lastLadder = ladderNow || this._lastLadder;
+    }
 
     // Vibe congruence repair is independent of section boundaries. In
     // particular, a peaceful mid-verse must escape a stale neon scene.
-    const vibeForbidden = new Set(vibeForbiddenPresets(vibeDom));
+    // Sticky morph ≥8–10s — no thrash on aggression blips.
+    const genreHintLive = audio?.genreHint || 'unknown';
+    const vibeForbidden = new Set([
+      ...vibeForbiddenPresets(vibeDom),
+      ...genreForbiddenPresets(genreHintLive)
+    ]);
     if (vibeForbidden.has(this.currentPreset)) {
       const repairCandidates = this.variation.avoidRecent(
-        [...vibeLeadPresets(vibeDom), ...genreLeadPresets(audio?.genreHint)], 40000, now
+        [
+          ...ladderLeadPresets(vibeDom?.ladder || audio?.vibe?.ladder),
+          ...vibeLeadPresets(vibeDom),
+          ...genreLeadPresets(genreHintLive)
+        ], 40000, now
       );
       const repairPreset = repairCandidates.find(p => !vibeForbidden.has(p));
-      if (repairPreset && this.variation.canChangeScene(now, 4000)) {
+      if (repairPreset && this.variation.canChangeScene(now, 9000)) {
         this.variation.recordScene(repairPreset, now);
         this.narrative.rememberScene(repairPreset, secType, time);
         this.transition = {
@@ -1097,7 +1210,7 @@ export class ScenePlanner {
       preset = this._liveSteerPreset;
       this.currentPreset = preset;
     } else if (sp && sp.preset !== this.currentPreset) {
-      const minGap = physicalSection ? 2500 : 6500;
+      const minGap = physicalSection ? 2800 : STICKY_MS; // continuity ≥8–10s (Worlds repair 9s)
       if (this.variation.canChangeScene(now, minGap)) {
         const candidates = this.variation.avoidRecent(
           [sp.preset, ...(sp.alternatePresets || [])],
@@ -1299,10 +1412,14 @@ export class ScenePlanner {
       });
       cast.roleBound = true;
     }
+    const fbVocal = !!((audio?.roles?.vocalish ?? audio?.roles?.lead ?? 0) >= 0.42);
     ensureCastPresence(cast, {
       speechLike: !!fbDom.speechLike,
       vibeFamily: fbDom.family || 'neutral',
-      sectionType: secType
+      sectionType: secType,
+      ladder: fbDom.ladder || null,
+      aggression: fbDom.aggression ?? audio?.vibe?.aggression ?? 0,
+      vocalFocus: fbVocal
     });
     if (Array.isArray(cast.members) && cast.members.length) {
       const gFam = getGenreFamily(this.narrative.getGenreFamily?.() || '') || null;
@@ -1315,7 +1432,10 @@ export class ScenePlanner {
         chorusRepeat: 1,
         afterGate: secType === 'breakdown' || secType === 'drop',
         roles,
-        archetype: cast.archetype
+        archetype: cast.archetype,
+        ladder: fbDom.ladder || null,
+        aggression: fbDom.aggression ?? audio?.vibe?.aggression ?? 0,
+        energy: audio?.energy || 0
       });
     }
     return {

@@ -162,3 +162,31 @@ After `genreFamily` resolves, roles are softly shaped toward fan pleasure, then 
 | pop / kpop | hats/lead sparkle; harsh demoted |
 
 Never invent a kick pocket that kills ambient/spoken immersion.
+
+## Vibe match / aggression (WAVE-20260929-vibe-match)
+
+Live `audio.vibe` now exposes clear aggression so aggressive songs steer chaos imagery:
+
+| Field | Meaning |
+|-------|---------|
+| `aggression` / `aggressive` | 0..1 from energy + harsh + onsetDensity + kick (+ genre deepen) |
+| `arousal` | Energy/punch (separate from peace/chaos label) |
+| `chaos` / `chaotic` | Amplified when aggression rises |
+| `dominant` | Prefers `chaos` when aggression > ~0.58; spoken/peace still win when soft |
+
+Soft bias: spoken / ambient / silence keep aggression low. Rock/noise families deepen envelopes after `genreFamily`. Soft-clip bleach guard: brief harsh spikes OK; sustained harsh soft-caps so Visual isn’t forced into white-out.
+
+## Aggression ladder (MUSIC-BRIEF-vibe-match-20260929)
+
+`audio.vibe.ladder` ∈ `peaceful` → `warm` → `tense` → `aggressive` (+ `scary` sibling) | `spoken`
+
+| Rung | Ear cues (Audio) |
+|------|------------------|
+| peaceful | soft pads, sparse kick, low harsh/arousal |
+| warm | steady pocket, mid kick, low harsh (groove ≠ aggression) |
+| tense | build / snare chatter, mid arousal |
+| aggressive | high harsh+kick+energy → high `aggression`/`chaos` |
+| scary | cold sparse + rare spikes (≠ festival chaos) |
+| spoken | speechLike clamps win |
+
+Anti (Audio side): soft folk/ambient never leave aggression high enough to invite warzone; metal/rock deepen aggression so neon meadow is not the signal.

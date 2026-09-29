@@ -128,6 +128,11 @@ export class NarrativeState {
     return this.world.castIdentity;
   }
 
+  /** Clear sticky WHO — only on earned ladder step change (Scene). */
+  clearCastIdentity() {
+    this.world.castIdentity = null;
+  }
+
   /**
    * Sticky role→agent map for a sectionChangeId (do not reshuffle every tick).
    * @param {{ sectionChangeId:number, roleIds:string[], memberKeys?:string[] }} bindings
