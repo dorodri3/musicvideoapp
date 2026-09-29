@@ -1,0 +1,243 @@
+v2-lyrics-brain-20260924-210414 — Lyrics Brain: harden ID3/LRCLIB + concept graph
+v2-visual-20260924-210422 | Visual Engine pre-edit checkpoint (typography/lighting/LED)
+v2-scene-20260924-210423 — Scene Director: pre-edit checkpoint before lyric→scene / motif / section-arc pass
+v2-audio-20260924-210429 — Audio Pulse: pre-edit checkpoint before frame.roles + mapping docs
+v2-polish-20260924-210440 — Phone Polish: pre-hardening checkpoint (tap-to-play, generate lock, status warn/error, safe-area, fullscreen webkit)
+
+v2-polish-20260924-210440+harden — Phone Polish post-checkpoint: status progression, generate finally/busy, ID fail copy, scroll lock, audio.roles + liveHint HUD wiring
+v2-visual-led-20260924-210637 — Visual Engine: cinematic lyrics + LED lighting + roles wiring
+v2-scene-20260924-210649 — Scene Director: stronger lyric→scene, motif callbacks, section arcs, audio.roles intents
+v2-polish-qa-20260924-210700 — Phone Polish pre-QA-fix checkpoint
+MUSIC-BRIEF Neon Highway — Rain Opens the Sky (20260924-210721)
+v2-lyrics-phrase-hold-20260924-210722 — sticky last-good lyric phrase for Visual Engine
+v2-visual-pre-director-20260924-210737 | before rolesIntent/transition/motifStrength wire
+MUSIC-BRIEF cross-field roles verse/chorus/drop (20260924-2108)
+v2-visual-director-wire-20260924-210902 — Visual Engine: wire rolesIntent + role events + motifStrength/variant + transition.mode through renderer/lighting/typography/camera
+2026-09-24T21:13:20+09:00 SIGN-OFF integrated → /workspace/light-show-versions/v2-integrated-signoff-20260924-211320
+VIDEO-FILM-NOTES-20260924-2115 — public MV/film craft notes (This Is America, Blinding Lights, Formation, Fury Road, BR2049, Karma Police, Sugar Water, arXiv MV language)
+MUSIC-BRIEF-20260924-2115 — actionable Scene/Visual/Audio/Camera/Worlds prompts from VIDEO-FILM-NOTES (ROLES verbs)
+v2-scene-20260924-211733 — Scene Director: pre-edit checkpoint before characters + motif props wave
+v2-visual-pre-scenic-lyrics-20260924-211734 | Visual Engine pre scenic-lyrics + characters refine
+v2-lyrics-sticky-expiry-20260924-211738 — Lyrics Brain: sticky expiry on section change + character concept hooks
+v2-worlds-pre-ceo-wave-20260924-211751 — Worlds Presets: pre-edit checkpoint before CEO scenic places wave (kill bass-height; add warzone/candy/neon highway/cozy autumn)
+v2-audio-no-spectrum-20260924-211755 — Audio Pulse: demote spectrum from live frame; soft-clip roles (Quality gap 4)
+VIDEO-FILM-NOTES character+scenic type (20260924-2118)
+MUSIC-BRIEF scenic lyrics + characters (20260924-2118)
+v2-camera-character-framing-20260924-211913
+v2-scene-20260924-212044 — Scene Director: characters cast + motifProps + lyricStickExpire; pack IDs apocalyptic_warzone/candy_happy/neon_highway/cozy_autumn; stay-in-family verse→chorus
+v2-scene-20260924-212126 — Scene Director: wire Lyrics figure hooks (lone_walker/crowd_sea; crowd≠congregation)
+v2-scene-20260924-212146 — Scene Director: figureFromConcept wired (lone_walker/crowd_sea); fixed semantic.js fantasyBoosts ]]; typo blocking imports
+v2-worlds-ceo-places-20260924-212203 — Worlds Presets: CEO places wave (bass-height kill + warzone/candy/neon_highway/cozy_autumn + figure stages + cast.placement)
+PSYCH-NOTES music mind/body (20260924-2122)
+MUSIC-BRIEF psych addendum (20260924-2122)
+v2-camera-cast-framing-20260924-212333
+v2-audio-psych-budgets-20260924-212357 — Audio Pulse: psych role budgets (hysteresis, short drop, medium groove)
+v2-audio-vibe-20260924-212505 — Audio Pulse: vibe + speechLike frame signals (CEO)
+v2-scene-20260924-212506 — Scene Director: pre-edit vibe→cast refine
+v2-worlds-pre-nature-scary-20260924-212508 — Worlds Presets: pre-edit before peaceful nature/fauna + scary sparse + fracture chaos + spoken-word bed
+VIBE-TAXONOMY peace/chaos/scary + spoken (20260924-2125)
+MUSIC-BRIEF vibe literacy + spoken-word (20260924-2125)
+PERF-20260924-2125-ceo-delta — Perf Guard: observe delta vs 2110; CEO places/cast worsen morph+atmos; no P0 fixed; no app edits
+v2-audio-vibe-spoken-20260924-212556 — Audio Pulse: taxonomy aliases + spoken clamps (VIBE-TAXONOMY)
+
+=== v2-visual-scenic-lyrics-20260924-212606 ===
+Time: 2026-09-24 21:26:06 JST
+Visual Engine scenic/characters pass:
+- renderer.js: Camera handoff (no forced shake / no cam.x|y groundShake jitter); _groundShake = ground/horizon flash only
+- renderer.js: ONE soft lead beam → _figureAnchor chest/head
+- renderer.js: _drawCast (cast/characters/concept.figure; silhouette|neon|dream; stage bands)
+- renderer.js: _drawMotifProps (circle/line/ember @ stage, strength→alpha)
+- renderer.js: clearSticky on lyricStickExpire / sectionChangeId; figure→typography hints
+- renderer.js: light vibe/speechLike hooks (peaceful/chaos/scary; speechLike throttles flash)
+- typography: verified scenic (no karaoke bars / no opaque scrim); clearSticky present
+- lighting: verified soft-clip LED bloom + bloomBoost throttle
+- presets: rainy_city/futuristic_city building heights already locked (no edit)
+node --check: renderer.js typography/system.js lighting/system.js camera/system.js OK
+v2-lyrics-speechlike-20260924-212610 — Lyrics Brain: speechLike semantic steer boost
+CAST-ROSTER archetypes + outfits (20260924-2127)
+MUSIC-BRIEF cast roster slices (20260924-2127)
+v2-worlds-nature-scary-20260924-212750 — Worlds Presets: meadow_fauna misty_lake dark_sparse reality_fracture spoken_word_bed + aliases meadow/fracture/warzone + fauna deepen peace packs
+
+=== v2-visual-cast-outfits-20260924-212950 ===
+Time: 2026-09-24 21:29:50 JST
+Visual Engine CAST+OUTFITS library (Scene Director draft contract aligned):
+- NEW js/viz/castLibrary.js: ARCHETYPE_IDS(14), OUTFIT_IDS(20 desk_lamp), STYLES(3),
+  OUTFITS map (palette/accessories/shape), ARCHETYPES map, resolveCastLook, drawCastFigure
+- renderer.js: import castLibrary; _drawOneFigure → resolveCastLook+drawCastFigure;
+  _drawCast members[] support; figure cap 6; vibe fallback; preserve _figureAnchor + stage bands
+- Styles: silhouette | neon | dream; legacy kind→archetype map incl. fauna/dancer
+- Visual lane only (no Worlds/Camera/director edits)
+Pre: v2-visual-pre-cast-outfits-20260924-212753
+node --check: castLibrary.js + renderer.js OK
+v2-camera-hold-cast-intimate-20260924-213111
+v2-scene-20260924-213127-cast-library-wire — Scene Director: HOLD fix — _liveCast→resolveLibraryCast; directive.cast.members+characterId+outfitId+archetype every section; sticky castIdentity; roster 14/68/20
+v2-scene-20260924-213138-cast-library-wire — Scene Director: HOLD fix castLibrary wire + neon pack→neon_runner; roster 14 archetypes / 68 chars / 20 outfits; directive.cast.members populated
+v2-scene-20260924-213146-cast-library-wire — Scene Director HOLD fix: castLibrary→_liveCast; members[]+characterId+outfitId; neon→neon_runner FG traveler; roster 14/68/20
+ROLE-AGENTS instrument to meaning (20260924-2133)
+MUSIC-BRIEF role agents (20260924-2133)
+v2-audio-role-agents-20260924-213330 — Audio Pulse: ROLE-AGENTS envelopes + ROLES.md pointer
+=== v2-scene-20260924-213340-pre-role-bind (pre) ===
+Time: 2026-09-24 21:33:41 JST
+Pre-checkpoint before role→cast agent bindings (ROLE-AGENTS-20260924-2133)
+v2-scene-20260924-213340-pre-role-bind
+
+=== v2-visual-hold-blockers-20260924-213440 (P0 HOLD QA-20260924-2129) ===
+Pre: v2-visual-pre-hold-blockers-20260924-213317
+Post: v2-visual-hold-blockers-20260924-213440
+Files: js/typography/system.js, js/viz/renderer.js, js/viz/castLibrary.js, js/scene/presets.js (spoken_word_bed light touch)
+BLOCKER1 plate: soft wash max alpha 0.16; bandW=glyph+pad only (no 0.82*w); dark strokeText under white fill; fonts title≤30/34 cinematic≤24/28 integrated≤18/22; light_band y~0.72; glyph globalAlpha≤0.88; clearSticky kept
+BLOCKER2 cast: _drawCast AFTER typography.draw; scale*1.55; body shapes ~1.35x; silhouette rgba(5,6,10,0.96); neon rim≥0.9 thicker; dream fill≥0.55; placement default foreground; opacity floor 0.85; members[] + concept.figure fallback; cap 6
+node --check: typography/system.js, viz/renderer.js, viz/castLibrary.js, scene/presets.js — all OK
+Blockers remaining: none
+MOVIE-NOTES war/weapons as meaning (20260924-2135)
+MUSIC-BRIEF war weapons gated (20260924-2135)
+
+=== v2-scene-20260924-213534-role-bind-weapons ===
+Time: 2026-09-24 21:35:34 JST
+Scene Director ROLE-AGENTS + WEAPONS scaffold:
+- castLibrary.js: ROLE_BINDINGS, ROLE_SPIKE_MAP, assignRoleIds, ensureRoleAgents, applyRoleBinding
+  (vocalish hub; kick/snare ground; hats sparks; bass weight; pads sky; harsh chaos-only)
+  Sticky-friendly; spoken=vocalish+pads; spike≥0.5 animates matching member only
+- castLibrary.js: WEAPON_IDS (blade/spear/rifle_sil/staff/energy_arc/shield),
+  weaponsAllowed/pickWeaponId/applyWeaponBinding — gated chaos/war/lyric conflict ONLY
+- narrativeState.js: roleBindings sticky on sectionChangeId (set/get/clearRoleBindings)
+- scenePlan.js: _liveCast→applyRoleBinding+applyWeaponBinding; cast.roleBound; clear on section gate
+- casting.js: assignRoleIds + applyWeaponBinding after resolveLibraryCast
+- motifProps.js: weapon prop ids + attachWeaponToMotifProps; war concepts enriched
+HOLD cast visibility preserved (members[]/characterId/outfitId/archetype/_liveCast wire intact)
+Pre: v2-scene-20260924-213340-pre-role-bind
+node --check: castLibrary casting scenePlan narrativeState motifProps OK
+v2-scene-20260924-213534-role-bind-weapons
+
+=== v2-scene-20260924-213645-role-weapons-sot ===
+Time: 2026-09-24 21:36:45 JST
+Scene Director ROLE-AGENTS + WEAPONS SoT (MOVIE-NOTES-WAR-WEAPONS-20260924-2135):
+- castLibrary: ROLE_BINDINGS/applyRoleBinding/assignRoleIds/ensureRoleAgents
+  roleIds: vocalish|kick|snare|hats|bass|pads|lead|harsh; sticky via narrative.roleBindings+sectionChangeId
+  spoken→vocalish+pads; harsh chaos-only; spike≥0.5 animates matching member; others hold
+- castLibrary: WEAPON_IDS SoT none|handgun_beat|rifle_silhouette|burden_suit|scrap_turret|ash_aftermath|riot_baton|scope_flash
+  weaponsAllowed gate: lyric conflict AND/OR chaos|scary on chaos_fracture|ash_survivor|warzone
+  Forbidden peace/spoken/nature_fauna/pastoral (irony 1-phrase only); release→ash_aftermath|none
+  stickyWeaponId on narrative; FG hub crosshair; BG snare/bass→rifle_silhouette texture
+- motifProps: WEAPON_PROP_IDS aligned; attachWeaponToMotifProps; war concepts enriched
+- scenePlan/casting: wire applyRoleBinding+applyWeaponBinding; cast.roleBound; cast.weaponId
+HOLD members[]/characterId/outfitId/archetype/_liveCast wire PRESERVED
+Pre: v2-scene-20260924-213340-pre-role-bind
+Prior: v2-scene-20260924-213534-role-bind-weapons (scaffold ids)
+node --check: all director touched files OK
+v2-scene-20260924-213645-role-weapons-sot
+=== v2-scene-20260924-213658-role-weapons-sot — concept primary weapon map (war_battle→scrap_turret, rage→handgun_beat, …) ===
+v2-scene-20260924-213658-role-weapons-sot
+
+CREW-PROCESS.md — org + wave flow locked by bot 1 (20260924-2137)
+
+=== v2-visual-role-weapons-20260924-213759 ===
+Time: 2026-09-24 21:37:59 JST
+Visual Engine: wire roleId pulse + weaponId props so they DRAW
+Pre: v2-visual-pre-role-weapons-20260924-213655
+Post: v2-visual-role-weapons-20260924-213759
+Scene SoT align: v2-scene-20260924-213658-role-weapons-sot
+Files: js/viz/renderer.js, js/viz/castLibrary.js
+- renderer.js: import drawRoleAgentFx+drawWeaponProp; _drawOneFigure calls after drawCastFigure
+- castLibrary drawCastFigure return: {fx,chestY,headY,baseY,handY,scale}
+- drawRoleAgentFx: vocalish/lead chest; kick feet; snare mid; hats sparks; bass shadow; pads aura; harsh ash ONLY chaos_fracture/ash_survivor
+- drawWeaponProp aliases: handgun_beat/handgun→pistol; scope_flash→rifle+muzzle tick; rifle_silhouette→rifle; burden_suit→isolation rim; ash_aftermath→broken glyph at feet; keep blade/spear/rifle/staff/shield/energy_arc
+- Peace gate: skip war props on pastoral_walker/nature_fauna/spoken_intimate unless lyricIrony
+- Visual draws only stamped weaponId (no invent); HOLD plate/cast untouched
+node --check: castLibrary.js renderer.js OK
+
+CEO: dancing in cast vocabulary — Scene when / Visual draw / Music Researcher MV dance grammar (20260924-2137)
+v2-worlds-pre-vibe-route-20260924-213802 — Worlds: pre-edit before vibe→pack routing strengthen (QA-2129)
+
+v2-visual-role-weapons-20260924-213759 — Visual: roleId pulse + weaponId props draw (dance next)
+VIDEO-FILM-NOTES dance choreography (20260924-2138)
+MUSIC-BRIEF dance addendum (20260924-2138)
+
+CEO: all-genre coverage — Music Researcher GENRE-MAP; Scene/Worlds/Audio routes (20260924-2138)
+v2-scene-20260924-213900-pre-dance-intent
+v2-audio-all-genre-20260924-213904 — Audio Pulse: all-genre vibe/texture tags (CEO)
+GENRE-MAP all-music literacy (20260924-2139)
+MUSIC-BRIEF genre map slices (20260924-2139)
+
+CEO: genre = fan pleasure (rap flow/bass, EDM drop, pop hook, country story/place, …) → GENRE-MAP deepen (20260924-2139)
+
+v2-audio-all-genre-20260924-213904 — Audio Pulse: texture + genreHint (soft Scene/Worlds bias)
+GENRE-MAP fan pleasure deepen (20260924-2140)
+MUSIC-BRIEF pleasure slices (20260924-2140)
+
+=== v2-visual-pre-dance-20260924-213843 (pre) ===
+Time: 2026-09-24 21:40:16 JST
+Visual Engine pre-dance checkpoint (copy of light-show before dance motion)
+
+=== v2-visual-dance-20260924-214016 ===
+Time: 2026-09-24 21:40:16 JST
+Visual Engine: readable cast dance motion (MUSIC-BRIEF-20260924-2138 + thin GENRE-MAP amp)
+- castLibrary.js: applyDanceMotion + drawCastFigure wire
+  triggers: action dance|step|spin|sway|groove|freestyle|formation; kind=dancer;
+  archetypes pop_candy|neon_runner|formation_crew|fg_performer; danceIntent; kick|snare|hats>0.45
+  motions: step (kick footfalls+bob), sway (snare/hats lean), spin (feet-pivot rotate)
+  feet on baseY; holdSilent=none; speechLike/spoken_intimate ≤30% amp; scary freeze
+  cheap genre: ambient/spoken/classical freeze; jazz/gospel micro; pop/k-pop amp+; metal chaos-only
+- renderer.js: pass roles/speechLike/danceIntent/vibe/section/genreFamily into drawCastFigure
+  member merge: roleId/rolePulse/weaponId/danceIntent; weapons still Scene-stamped only
+- HOLD: no typography / HOLD lyric plate edits; cast visibility not reduced
+Pre: v2-visual-pre-dance-20260924-213843
+node --check: castLibrary.js + renderer.js OK
+v2-audio-genre-family-20260924-214018 — Audio Pulse: genreFamily from ID3/user + GENRE-MAP
+
+v2-worlds-pre-genre-20260924-214026 — Worlds pre-genre (CEO genre pack wave)
+
+v2-visual-dance-20260924-214016 — Visual: step/sway/spin + thin genre dance rules (HOLD lyrics untouched)
+v2-scene-20260924-214052-pre-dance-genre
+v2-audio-pleasure-20260924-214106 — Audio Pulse: genre pleasure lean (GENRE-MAP-PLEASURE)
+v2-visual-pre-pleasure-20260924-214118 — Visual Engine pre pleasure multipliers (GENRE-MAP-PLEASURE-2140)
+v2-scene-20260924-214150-pre-dance-genre — Scene Director pre-edit before danceIntent + genreFamily pleasure
+v2-worlds-vibe-route-20260924-214132 — Worlds: vibe→pack routing (forbidden neon for peace/spoken; live congruence morph; genreHint soft leads; nature plan seed; QA-2129)
+
+v2-worlds-vibe-route-20260924-214132 — Worlds: vibe congruence morph + genreHint lead presets (fan packs still writing)
+
+QA-20260924-2142 HOLD — lyric dark card + cast speck still FAIL; Visual+Scene P0 assigned
+
+CEO: flashy/chaotic but not hard to look at — Visual bloom/flash ceilings + A11y notes (with HOLD-2142 P0)
+v2-visual-pre-hold-rehold-20260924-214304 — Visual Engine pre P0 HOLD QA-2142 rehold (lyric plate + cast scale + comfort bloom)
+v2-scene-20260924-214326-dance-genre-pleasure — Scene Director DONE: danceIntent emit (Visual vocab) + genreFamily pleasure casting (GENRE-MAP-PLEASURE-2140) + soft audio.genreHint; unknown≠neon_highway
+
+Crew sync channel + routine (10/14/18/22:43 JST) — CEO team understanding (20260924-2143)
+v2-scene-20260924-214338-dance-genre-pleasure — Scene Director DONE: danceIntent+danceEnergy emit (Visual vocab); genreFamily pleasure (GENRE-MAP-PLEASURE-2140); soft genreHint; K-pop≠pop; unknown≠neon_highway
+v2-worlds-genre-packs-20260924-214353 — Worlds: fan-pleasure genre packs (soul_room club_floor metal_hall jazz_club orchestral_hall latin_night gospel_light hiphop_block country_porch ambient_field stage_pop + aliases)
+
+v2-scene-20260924-214338-dance-genre-pleasure — Scene: danceIntent emit + genreFamily pleasure (HOLD cast P0 still open)
+
+A11y-COMFORT-FLASH-20260924-2143 — flash/bloom caps for Visual (HOLD P0 untouched)
+v2-scene-20260924-214436-pre-cast-presence — Scene Director pre P0 cast presence (≥1 large FG)
+v2-worlds-genre-wire-20260924-214438 — Worlds: register genre packs in KNOWN_PRESETS + Scene genreFamily PACK_FAMILIES + aliases/affinity (after packs v2-worlds-genre-wire-20260924-214438 related to v2-worlds-genre-packs-20260924-214353)
+also v2-worlds-genre-wire-20260924-214438
+v2-scene-20260924-214445-cast-presence-p0 — Scene Director P0 QA-2142: ensureCastPresence ≥1 large FG hub (scale≥1.55/1.25 spoken, opacity≥0.95/0.82, presence, foreground, holdSilent false) every section
+
+v2-worlds-genre-packs-20260924-214353 — Worlds: 11 fan-pleasure packs + aliases (parked for HOLD-2142 P0)
+
+v2-worlds-genre-wire-20260924-214438 — Worlds: KNOWN_PRESETS + PACK_FAMILIES wire (idle for HOLD P0)
+v2-scene-20260924-214454-cast-presence-p0 — Scene Director P0 QA-2142 cast presence: ensureCastPresence ≥1 large FG hub every section (scale 1.55/1.25, opacity 0.95/0.82, presence, holdSilent false)
+
+v2-scene-20260924-214454-cast-presence-p0 — Scene: ensureCastPresence FG hub (HOLD-2142 cast emit)
+v2-scene-20260924-214531-worlds-genre-ids — Scene Director: genreMap leadPresets→Worlds final IDs (soul_room/club_floor/hiphop_block/…); packFamily keys match Worlds PACK_FAMILIES. Cast P0 unchanged. Parking.
+v2-visual-hold-rehold-20260924-214611 — Visual Engine P0 HOLD QA-2142: no dark lyric card; large FG cast; comfort bloom+A11y getMotionComfort
+
+v2-visual-hold-rehold-20260924-214611 — Visual: HOLD-2142 P0 (no lyric plate, human-scale cast, comfort) → Works Tester re-gate
+
+QA-20260924-2149 HOLD — live contradicts visual-hold-rehold; Visual+Scene reopen P0; diagnosis executor running
+v2-visual-pre-hold2149-20260924-215159 — Visual pre HOLD-2149 (delete plate fill + cachebust + cast)
+v2-scene-20260924-215204-cast-presence-hotfix-2149 — Scene Director HOLD-2149: resurrect kind=none→FG hub; coerce string scales→numeric; hub=members[0]; ensureCastPresence always. No DONE until Works Tester human-scale.
+
+v2-scene-20260924-215204-cast-presence-hotfix-2149 — Scene: never kind=none; coerce numeric scale (HOLD-2149 cast root)
+
+Diagnosis: lyric plate was typography _roundRect fill / stale cache; live hold2149 plate-free; also check #show-prompt hidden during show
+v2-visual-hold2149-20260924-215354 — Visual HOLD-2149: deleted lyric plate fill path; cache-bust; human cast; #show-prompt hidden during show
+v2-visual-pre-hold2149-20260924-215159 — Visual pre HOLD-2149 (delete plate fill + cachebust + cast)
+
+v2-visual-hold2149-20260924-215354 — Visual: _roundRect deleted + cache-bust + show-prompt hide + cast 0.60h → full re-gate
+
+DRIVE 2026-09-30 ~05:10 JST — :8765+tunnel restored (https://senior-recorded-kenny-chicago.trycloudflare.com); HOLD-2149 claimed fixes (LATEST_VISUAL=v2-visual-hold2149-20260924-215354, LATEST_SCENE=v2-scene-20260924-215204-cast-presence-hotfix-2149); no newer QA → Works Tester re-gate nudge
+v2-phone-upload-samsung-20260929 — label-for file picker + visually-hidden + broader accept (Samsung/iOS)
+v2-polish-upload-samsung-20260930-051352 — Phone Polish pre Samsung upload harden
+v2-lyrics-semantic-comma-20260929-1317 — missing comma after crowd_sea (HOLD QA-1317)

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Light Show — Imagined Movie</title>
+  <link rel="stylesheet" href="css/style.css?v=hold1317" />
+</head>
+<body>
+  <div id="setup-screen">
+    <div class="setup-inner">
+      <h1>Light Show</h1>
+      <p class="tagline">Directed visual fantasy for the song in your head</p>
+      <blockquote class="north-star">
+        “This looks like the movie I see in my head when I listen to this song.”
+      </blockquote>
+
+      <section class="panel">
+        <h2>1 · Select audio</h2>
+        <div class="row">
+          <button type="button" id="btn-mic">Microphone</button>
+          <div class="file-pick">
+            <label for="file-audio" id="btn-upload" class="btn file-pick-label">Upload song</label>
+            <input type="file" id="file-audio" class="file-pick-input" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.mp4,.mov" />
+          </div>
+        </div>
+        <div id="audio-label">No audio selected</div>
+
+        <div id="song-card" class="song-card hidden">
+          <div id="song-card-title" class="song-card-title">—</div>
+          <div id="song-card-status" class="song-card-status">Identifying…</div>
+          <div class="song-id-fields">
+            <label>Artist
+              <input type="text" id="artist-input" placeholder="Artist name" autocomplete="off" />
+            </label>
+            <label>Title
+              <input type="text" id="title-input" placeholder="Song title" autocomplete="off" />
+            </label>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button type="button" id="btn-fetch-lyrics">Fetch lyrics</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>2 · Lyrics</h2>
+        <textarea id="lyrics-input" rows="5" placeholder="Auto-fetched from the internet, or paste lyrics / LRC…"></textarea>
+        <div class="row" style="margin-top:8px">
+          <div class="file-pick">
+            <label for="file-lyrics" id="btn-lyrics-file" class="btn file-pick-label">Upload .lrc / .txt</label>
+            <input type="file" id="file-lyrics" class="file-pick-input" accept=".lrc,.txt,text/plain,text/*" />
+          </div>
+        </div>
+        <p class="hint">Upload identifies the song and pulls lyrics (LRCLIB). Synced LRC preferred. Paste works anytime.</p>
+      </section>
+
+      <section class="panel">
+        <h2>3 · What do you imagine when you hear this song?</h2>
+        <textarea id="fantasy-input" class="fantasy-input" rows="4"
+          placeholder="e.g. A lone figure walking an empty neon highway while the sky slowly tears open into stars…"></textarea>
+        <p class="hint">This shapes the world theme, presets, and motifs — the most important creative input.</p>
+      </section>
+
+      <section class="panel">
+        <h2>4 · Mood &amp; style</h2>
+        <div class="row">
+          <label style="flex:1;color:var(--muted);font-size:0.85rem">Mood
+            <select id="mood-select">
+              <option value="auto" selected>Auto</option>
+              <option value="dark">Dark</option>
+              <option value="hopeful">Hopeful</option>
+              <option value="aggressive">Aggressive</option>
+              <option value="melancholic">Melancholic</option>
+              <option value="euphoric">Euphoric</option>
+              <option value="tense">Tense</option>
+            </select>
+          </label>
+          <label style="flex:1;color:var(--muted);font-size:0.85rem">Intensity
+            <select id="intensity-select">
+              <option value="low">Low</option>
+              <option value="moderate" selected>Moderate</option>
+              <option value="high">High</option>
+              <option value="extreme">Extreme</option>
+            </select>
+          </label>
+        </div>
+        <p class="hint" style="margin-bottom:8px">Fantasy style (multi-select)</p>
+        <div class="row">
+          <button type="button" data-style="realistic">Realistic</button>
+          <button type="button" data-style="cinematic" class="active">Cinematic</button>
+          <button type="button" data-style="surreal">Surreal</button>
+          <button type="button" data-style="dreamlike" class="active">Dreamlike</button>
+          <button type="button" data-style="mythological">Mythological</button>
+          <button type="button" data-style="sci-fi">Sci-Fi</button>
+          <button type="button" data-style="horror">Horror</button>
+          <button type="button" data-style="abstract">Abstract</button>
+          <button type="button" data-style="epic">Epic</button>
+        </div>
+        <div class="toggles" style="margin-top:12px">
+          <label><input type="checkbox" id="toggle-lyrics" checked /> Lyrics on</label>
+          <label><input type="checkbox" id="toggle-characters" checked /> Characters on</label>
+        </div>
+      </section>
+
+      <button type="button" class="primary" id="btn-generate">Generate show</button>
+      <div id="status-line"></div>
+    </div>
+  </div>
+
+  <div id="show-screen" class="hidden">
+    <div id="show-stage">
+      <canvas id="viz-canvas"></canvas>
+    </div>
+    <div id="show-prompt" class="hidden" role="status" aria-live="polite"></div>
+    <div id="show-overlay">
+      <div id="hud-info"></div>
+      <div class="overlay-btns">
+        <button type="button" id="btn-fullscreen">Fullscreen</button>
+        <button type="button" id="btn-exit">Exit</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js?v=hold1317"></script>
+</body>
+</html>

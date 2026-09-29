@@ -1,0 +1,386 @@
+:root {
+  --bg: #06060c;
+  --panel: #10101a;
+  --border: #2a2a40;
+  --text: #e8e8f0;
+  --muted: #8888a0;
+  --accent: #a090ff;
+  --accent2: #ff6090;
+  --ok: #60d0a0;
+  font-family: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Phone show mode: freeze body scroll / rubber-band bounce */
+body.show-active {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+.hidden { display: none !important; }
+
+/* Phone-safe file inputs: keep in DOM (not display:none/hidden) so iOS opens picker via <label for> */
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+#setup-screen {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(48px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+  -webkit-overflow-scrolling: touch;
+}
+
+.setup-inner {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-weight: 300;
+  font-size: 1.6rem;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.tagline {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 24px;
+  line-height: 1.4;
+}
+
+.north-star {
+  border-left: 3px solid var(--accent);
+  padding: 8px 14px;
+  margin-bottom: 28px;
+  color: #c8c0ff;
+  font-style: italic;
+  font-size: 0.95rem;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.panel h2 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+button, .btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #181828;
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+button:active, .btn:active { transform: scale(0.98); }
+
+button.primary {
+  background: linear-gradient(135deg, #6a50e0, #c05090);
+  border: none;
+  font-weight: 600;
+  width: 100%;
+  padding: 16px;
+  font-size: 1.05rem;
+  margin-top: 8px;
+}
+
+button.active, [data-style].active {
+  border-color: var(--accent);
+  background: #221a40;
+  color: #e0d8ff;
+}
+
+textarea, select, input[type="text"] {
+  width: 100%;
+  background: #0a0a14;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 12px;
+  font-size: 0.95rem;
+  resize: vertical;
+  font-family: inherit;
+}
+
+textarea:focus, select:focus {
+  outline: 1px solid var(--accent);
+}
+
+.fantasy-input {
+  min-height: 90px;
+  border-color: #5040a0;
+  background: #0c0a18;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.toggles {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.toggles label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+#audio-label, #status-line {
+  font-size: 0.85rem;
+  color: var(--ok);
+  margin-top: 8px;
+  min-height: 1.2em;
+}
+
+#status-line.warn { color: #e8c060; }
+#status-line.error { color: #ff8098; }
+
+button.primary:disabled,
+#btn-generate:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  transform: none;
+}
+
+#show-screen {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+#show-stage, #viz-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#show-prompt {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  max-width: min(88vw, 360px);
+  padding: 18px 22px;
+  padding-left: max(18px, env(safe-area-inset-left));
+  padding-right: max(18px, env(safe-area-inset-right));
+  border-radius: 14px;
+  background: rgba(8, 8, 18, 0.82);
+  border: 1px solid #5a48a8;
+  color: #f0ecff;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+
+/* HOLD-2149: must stay .hidden during show — this card reads as karaoke plate */
+#show-prompt.hidden { display: none !important; }
+
+
+
+#show-overlay {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 16px;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0,0,0,0.75));
+  pointer-events: none;
+  transition: background 0.4s;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  z-index: 6;
+}
+
+#show-overlay:not(.visible) {
+  background: transparent;
+  pointer-events: none;
+}
+
+#show-overlay.visible {
+  pointer-events: auto;
+}
+
+#hud-info {
+  font-size: 0.75rem;
+  color: #aaa;
+  letter-spacing: 0.05em;
+  opacity: 0;
+  transition: opacity 0.4s;
+  pointer-events: none;
+}
+
+#show-overlay.visible #hud-info {
+  opacity: 1;
+}
+
+/* Always-reachable Exit/Fullscreen when chrome is "hidden" */
+.overlay-btns {
+  display: flex;
+  gap: 8px;
+  opacity: 0.45;
+  pointer-events: auto;
+  transition: opacity 0.4s;
+}
+
+#show-overlay.visible .overlay-btns {
+  opacity: 1;
+}
+
+/* iOS immersive fallback when requestFullscreen is unavailable */
+#show-screen.immersive,
+body.immersive #show-screen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  width: 100dvw;
+  height: 100dvh;
+  z-index: 100;
+}
+
+#show-screen.immersive #show-overlay:not(.visible) .overlay-btns {
+  opacity: 0.55;
+}
+
+@media (max-width: 480px) {
+  h1 { font-size: 1.3rem; }
+  .setup-inner { padding: 0 4px; }
+}
+
+/* Song identity card */
+.song-card {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #3a3060;
+  background: linear-gradient(160deg, #14122a, #0e0e18);
+}
+.song-card-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #e8e0ff;
+  margin-bottom: 4px;
+  letter-spacing: 0.01em;
+}
+.song-card-status {
+  font-size: 0.8rem;
+  color: var(--ok);
+  margin-bottom: 10px;
+  min-height: 1.2em;
+}
+.song-card-status.warn { color: #e8c060; }
+.song-card-status.error { color: #ff8098; }
+.song-id-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.song-id-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+@media (max-width: 480px) {
+  .song-id-fields { grid-template-columns: 1fr; }
+}
+
+
+/* Full-hit-area file pickers (Samsung/Android: 1×1 clipped inputs often fail) */
+.file-pick {
+  position: relative;
+  display: inline-block;
+}
+.file-pick-label {
+  display: inline-block;
+  position: relative;
+  z-index: 1;
+}
+.file-pick-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  font-size: 16px; /* avoid iOS zoom quirks */
+  z-index: 2;
+}

@@ -1,0 +1,15 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*
+*.pem
+secrets/
+__pycache__/
+.cache/
+.cloudflared/
+tmp/
+*.wav
+*.mp3
+*.flac
+*.m4a
