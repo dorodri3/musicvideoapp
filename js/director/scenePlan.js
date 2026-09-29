@@ -860,20 +860,8 @@ export class ScenePlanner {
           memberKeys: cast.members.map(m => m.characterId || '')
         });
       }
-      // DANCE — Visual consumes anim/danceEnergy/danceIntent
-      const gFam = getGenreFamily(this.narrative.getGenreFamily?.() || '') || null;
-      const danceBias = gFam?.danceBias || (speechLike ? 'low' : 'mid');
-      cast.members = applyDanceIntent(cast.members, cast, {
-        sectionType: secType,
-        speechLike,
-        vibeFamily: dom.family || 'neutral',
-        danceBias,
-        intensity: Math.max(scaleName === 'intimate' ? 0.35 : 0.5, (audio?.energy || 0.4)),
-        chorusRepeat,
-        afterGate: secType === 'breakdown' || secType === 'drop',
-        roles: liveRoles
-      });
       // Genre weaponsAllowed=false → strip weapons unless already none
+      const gFam = getGenreFamily(this.narrative.getGenreFamily?.() || '') || null;
       if (gFam && gFam.weaponsAllowed === false && Array.isArray(cast.members)) {
         for (const m of cast.members) m.weaponId = 'none';
         cast.weaponId = 'none';
@@ -887,12 +875,31 @@ export class ScenePlanner {
       this.narrative.establishCast(cast);
     }
 
-    // P0 QA-2142/2149 — ≥1 large FG hub EVERY frame (resurrects kind none)
+    // P0 QA-2142/2149/1345 — ≥1 large FG hub EVERY frame (resurrects kind none)
     ensureCastPresence(cast, {
       speechLike,
-      vibeFamily: (this._lastVibeDom || {}).family || 'neutral',
+      vibeFamily: dom.family || (this._lastVibeDom || {}).family || 'neutral',
       sectionType: secType
     });
+
+    // DANCE after presence floors — stamp danceIntent/dance on final hub+members
+    // (MUSIC-BRIEF cast-detail: high kick/groove/chorus → dance; pastoral/sacred/spoken → sway/still)
+    if (cast.kind !== 'none' && Array.isArray(cast.members) && cast.members.length) {
+      const gFamDance = getGenreFamily(this.narrative.getGenreFamily?.() || '') || null;
+      const danceBias = gFamDance?.danceBias || (speechLike ? 'low' : 'mid');
+      const liveRoles = roles || this._rolesIntents(audio, vocal);
+      cast.members = applyDanceIntent(cast.members, cast, {
+        sectionType: secType,
+        speechLike,
+        vibeFamily: dom.family || 'neutral',
+        danceBias,
+        intensity: Math.max(scaleName === 'intimate' ? 0.35 : 0.5, (audio?.energy || 0.4)),
+        chorusRepeat,
+        afterGate: secType === 'breakdown' || secType === 'drop',
+        roles: liveRoles,
+        archetype: cast.archetype
+      });
+    }
 
     this._lastCast = cast;
     return cast;
@@ -1297,6 +1304,20 @@ export class ScenePlanner {
       vibeFamily: fbDom.family || 'neutral',
       sectionType: secType
     });
+    if (Array.isArray(cast.members) && cast.members.length) {
+      const gFam = getGenreFamily(this.narrative.getGenreFamily?.() || '') || null;
+      cast.members = applyDanceIntent(cast.members, cast, {
+        sectionType: secType,
+        speechLike: !!fbDom.speechLike,
+        vibeFamily: fbDom.family || 'neutral',
+        danceBias: gFam?.danceBias || (fbDom.speechLike ? 'low' : 'mid'),
+        intensity: 0.45 + (audio?.energy || 0.3) * 0.4,
+        chorusRepeat: 1,
+        afterGate: secType === 'breakdown' || secType === 'drop',
+        roles,
+        archetype: cast.archetype
+      });
+    }
     return {
       theme: 'Emerging vision',
       preset: this.currentPreset || 'dream_clouds',

@@ -245,3 +245,13 @@ v2-polish-upload-reharden-20260930-053932 — Phone Polish Samsung upload re-har
 v2-polish-upload-reharden — Samsung accept=*/* + opacity 0.01 + font-size 100px + input/change debounce (?v=upload-reharden)
 v2-lyrics-autofetch-partial-id-20260930-054215 — Lyrics Brain P0: autofetch when artist OR title present (was blocked by needs_manual); cache bust lyrics-fix1
 v2-scene-20260930-054656-cast-readable-neon-1345 — Scene HOLD-1345: ensureCastPresence forces neon/dream hub (silhouette invisible on dark rain), scale≥2.0/2.4 numeric, readableCast, verse=1 hub, no fauna/empty_chair. Pair Visual marker-path if teal boxed dots persist.
+
+=== v2-integrated-signoff-20260929-1350 ===
+Time: 2026-09-29 ~1:50 PM PT / drive snap 2026-09-30 ~06:12 JST
+QA-20260929-1350 SIGN-OFF (?v=hold1345-cast) — HOLD-1345 cast speck cleared
+SoT: Scene v2-scene-20260930-054656-cast-readable-neon-1345 · Visual v2-visual-hold1345-20260930-054834
+Also: lyrics autofetch partial-id · upload reharden · GitHub f77a5b8
+Release: RELEASE-20260929-1350.md · LATEST_INTEGRATED updated
+IDLE creatives pending Darrell next direction; Tunnel Ops may continue
+MUSIC-BRIEF cast costume + dance energy (20260929)
+v2-scene-20260930-061724-cast-detail — Scene cast-detail: real outfitId from vibe+archetype (coat/cloak wedges); danceIntent after ensureCastPresence; pastoral/sacred/spoken anti-dance; HOLD-1345 scale≥2.4/2.0 kept; neon-only default softened to OUTFIT neon|dream

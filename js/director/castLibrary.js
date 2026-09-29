@@ -300,27 +300,63 @@ export function pickCharacter(archetypeId, opts = {}) {
 export function pickOutfit(character, dom, opts = {}) {
   if (!character) return 'room_clothes';
   const family = dom?.family || 'neutral';
-  const slots = character.outfitSlots || [character.defaultOutfit];
+  // Skip empty_chair — Characters-on needs a drawable coat/cloak wedge (MUSIC-BRIEF cast-detail)
+  const slots = (character.outfitSlots || [character.defaultOutfit]).filter(id => id && id !== 'empty_chair');
   const prefer = {
     peaceful: ['linen_dawn', 'moss_trail', 'water_gloss', 'aisle_linen'],
     chaotic: ['fracture_rag', 'industrial_hazard', 'ember_coat'],
     scary: ['dread_coat', 'pale_void', 'threshold'],
-    spoken: ['room_clothes', 'desk_lamp', 'empty_chair'],
+    spoken: ['room_clothes', 'desk_lamp'],
     euphoric: ['chrome_candy', 'stage_gloss', 'color_block_crew'],
     groove: ['after_hours_red', 'neon_trim', 'highway_dust'],
     awe: ['star_dust', 'aisle_linen', 'pale_void']
   };
+  // Archetype wedge bias (MUSIC-BRIEF cast-detail) before vibe prefer list
+  const archPrefer = {
+    sacred_solitary: ['aisle_linen', 'star_dust', 'pale_void'],
+    pastoral_walker: ['moss_trail', 'linen_dawn', 'highway_dust', 'water_gloss'],
+    nature_fauna: ['moss_trail', 'linen_dawn', 'water_gloss'],
+    fg_performer: ['after_hours_red', 'stage_gloss', 'industrial_hazard', 'neon_trim'],
+    pop_candy: ['chrome_candy', 'stage_gloss', 'color_block_crew'],
+    neon_runner: ['after_hours_red', 'neon_trim', 'highway_dust'],
+    formation_crew: ['color_block_crew', 'stage_gloss', 'neon_trim'],
+    chaos_fracture: ['fracture_rag', 'industrial_hazard', 'ember_coat'],
+    ash_survivor: ['ember_coat', 'fracture_rag'],
+    dread_sparse: ['dread_coat', 'threshold', 'pale_void'],
+    void_presence: ['pale_void', 'aisle_linen'],
+    spoken_intimate: ['room_clothes', 'desk_lamp'],
+    tableau_figure: ['room_clothes', 'desk_lamp', 'highway_dust'],
+    cosmic_dissolve: ['star_dust', 'pale_void', 'aisle_linen']
+  };
+  const archList = archPrefer[character.archetype] || [];
+  for (const id of archList) {
+    if (slots.includes(id)) {
+      // Chorus: allow brighter rim within slots further down archList / chorus prefs
+      if (opts.sectionType === 'chorus') break;
+      return id;
+    }
+  }
   const list = prefer[family] || prefer[opts.vibeTag] || [];
   for (const id of list) {
     if (slots.includes(id)) return id;
   }
-  // Chorus amplify: prefer stage/ember rim if available
+  // If chorus and we deferred arch hit, take first arch slot then chorus brighten
   if (opts.sectionType === 'chorus') {
-    for (const id of ['stage_gloss', 'color_block_crew', 'ember_coat', 'neon_trim']) {
+    for (const id of archList) {
+      if (slots.includes(id)) {
+        // fall through to chorus amplify below for brighter rim when available
+        break;
+      }
+    }
+  }
+  // Chorus amplify: brighter rim / trim within SAME silhouette family (no full wardrobe swap)
+  if (opts.sectionType === 'chorus') {
+    for (const id of ['stage_gloss', 'color_block_crew', 'ember_coat', 'neon_trim', 'star_dust', 'linen_dawn']) {
       if (slots.includes(id)) return id;
     }
   }
-  return character.defaultOutfit || slots[0] || 'room_clothes';
+  const def = character.defaultOutfit !== 'empty_chair' ? character.defaultOutfit : null;
+  return def || slots[0] || 'room_clothes';
 }
 
 /**
@@ -1133,14 +1169,22 @@ export function applyDanceIntent(members, cast = {}, opts = {}) {
     intensity = 0.5,
     chorusRepeat = 1,
     afterGate = false,
-    roles = null
+    roles = null,
+    archetype = null
   } = opts;
 
   const family = String(vibeFamily || 'neutral');
   const bias = String(danceBias || 'mid');
+  const arch = String(archetype || cast.archetype || '');
+  // MUSIC-BRIEF cast-detail: never force dance on pastoral / sacred / spoken
+  const antiDanceArch = arch === 'pastoral_walker' || arch === 'sacred_solitary'
+    || arch === 'nature_fauna' || arch === 'spoken_intimate' || arch === 'cosmic_dissolve';
   const freeze = speechLike || family === 'spoken' || family === 'scary';
-  const pastoral = family === 'peaceful' || bias === 'low';
-  const danceWins = !freeze && (
+  const pastoral = family === 'peaceful' || bias === 'low' || antiDanceArch;
+  // Mid R&B/soul/jazz pocket → sway (bias mid, not high club)
+  const softPocket = !freeze && !pastoral && bias === 'mid'
+    && (sectionType === 'verse' || sectionType === 'pre' || sectionType === 'bridge');
+  const danceWins = !freeze && !pastoral && (
     bias === 'high'
     || (bias !== 'low' && (sectionType === 'chorus' || family === 'chaotic' || /euphoric|groove|club/.test(family)))
   );
@@ -1149,11 +1193,16 @@ export function applyDanceIntent(members, cast = {}, opts = {}) {
   let danceIntent = 'still';
   let danceEnergy = 0.15;
   if (freeze) {
+    // spoken / scary / ballad confession — still or micro-sway
     danceIntent = speechLike ? 'sway' : 'still';
     danceEnergy = speechLike ? 0.18 : 0.08;
-  } else if (pastoral && sectionType !== 'chorus') {
-    danceIntent = 'walk';
-    danceEnergy = 0.22;
+  } else if (pastoral) {
+    // pastoral / sacred: walk or soft sway only — never freestyle/formation
+    danceIntent = sectionType === 'chorus' ? 'sway' : 'walk';
+    danceEnergy = sectionType === 'chorus' ? 0.28 : 0.22;
+  } else if (softPocket) {
+    danceIntent = 'sway';
+    danceEnergy = 0.32;
   } else if (sectionType === 'pre') {
     danceIntent = 'sway';
     danceEnergy = 0.28;
@@ -1252,9 +1301,92 @@ function _numericScale(v, floor = 1.0) {
 }
 
 /**
+ * MUSIC-BRIEF cast-detail: archetype → silhouette wedge (coat/cloak/robe/torn).
+ * Continuity: stay in slots; chorus may brighten rim within family — never empty_chair.
+ */
+function _archetypeOutfitWedge(archetype, vibeFamily, sectionType) {
+  const arch = String(archetype || '');
+  const fam = String(vibeFamily || 'neutral');
+  const chorus = sectionType === 'chorus' || sectionType === 'drop';
+  // fg_performer / pop_candy → sharp jacket / candy coat flare
+  if (arch === 'fg_performer') return chorus ? 'stage_gloss' : 'after_hours_red';
+  if (arch === 'pop_candy') return chorus ? 'stage_gloss' : 'chrome_candy';
+  if (arch === 'neon_runner') return chorus ? 'neon_trim' : 'after_hours_red';
+  if (arch === 'formation_crew') return chorus ? 'stage_gloss' : 'color_block_crew';
+  // pastoral_walker → soft cloak / long coat
+  if (arch === 'pastoral_walker' || arch === 'nature_fauna') {
+    return chorus ? 'linen_dawn' : (fam === 'peaceful' ? 'moss_trail' : 'linen_dawn');
+  }
+  // sacred_solitary → robe / column
+  if (arch === 'sacred_solitary' || arch === 'cosmic_dissolve') {
+    return chorus ? 'star_dust' : 'aisle_linen';
+  }
+  // chaos_fracture → torn / asymmetric coat
+  if (arch === 'chaos_fracture' || arch === 'ash_survivor') {
+    return chorus ? 'ember_coat' : 'fracture_rag';
+  }
+  if (arch === 'dread_sparse' || arch === 'void_presence') return 'dread_coat';
+  if (arch === 'spoken_intimate' || arch === 'tableau_figure') {
+    return fam === 'spoken' || fam === 'scary' ? 'desk_lamp' : 'room_clothes';
+  }
+  // vibe family fallbacks (no neon-only default)
+  if (fam === 'peaceful') return 'linen_dawn';
+  if (fam === 'scary') return 'dread_coat';
+  if (fam === 'spoken') return 'desk_lamp';
+  if (fam === 'chaotic') return chorus ? 'ember_coat' : 'fracture_rag';
+  return chorus ? 'neon_trim' : 'highway_dust';
+}
+
+/** Resolve real outfitId from character slots + vibe; never empty_chair on Characters-on. */
+function _resolveOutfitId(cast, opts = {}) {
+  const {
+    speechLike = false,
+    vibeFamily = 'neutral',
+    sectionType = 'verse'
+  } = opts;
+  const sparseMood = speechLike
+    || vibeFamily === 'scary'
+    || vibeFamily === 'spoken'
+    || cast.archetype === 'dread_sparse'
+    || cast.archetype === 'void_presence';
+
+  let outfitId = cast.outfitId;
+  if (outfitId && outfitId !== 'empty_chair' && OUTFITS[outfitId]) {
+    return outfitId;
+  }
+  const character = (cast.characterId && CHAR_BY_ID.get(cast.characterId)) || null;
+  const dom = { family: vibeFamily === 'neutral' ? null : vibeFamily, speechLike };
+  // Prefer sticky character slots (verse→chorus continuity within outfit family)
+  if (character) {
+    const picked = pickOutfit(character, {
+      family: vibeFamily === 'neutral' ? (character.vibeTags?.[0] || 'groove') : vibeFamily,
+      speechLike
+    }, { sectionType });
+    if (picked && picked !== 'empty_chair') return picked;
+  }
+  const wedge = _archetypeOutfitWedge(cast.archetype, vibeFamily, sectionType);
+  if (wedge && wedge !== 'empty_chair') return wedge;
+  return sparseMood ? 'desk_lamp' : 'highway_dust';
+}
+
+/**
+ * High-contrast style for dark LED: prefer OUTFIT neon|dream so coats differentiate.
+ * Silhouette-tagged outfits bump to dream (peaceful/spoken) or neon (groove) — never
+ * force one neon look for every cast (cast-detail wave).
+ */
+function _readableStyleForOutfit(outfitId, sparseMood, vibeFamily, existingStyle) {
+  const fromOutfit = OUTFITS[outfitId]?.style;
+  if (fromOutfit === 'neon' || fromOutfit === 'dream') return fromOutfit;
+  if (existingStyle === 'neon' || existingStyle === 'dream') return existingStyle;
+  if (sparseMood || vibeFamily === 'peaceful' || vibeFamily === 'spoken') return 'dream';
+  return 'neon';
+}
+
+/**
  * P0 QA-2142/2149/1345: Characters-on MUST emit ≥1 READABLE human-scale FG hub.
  * Live fail mode: near-black silhouette on dark rain → invisible; only motif dots
  * read as "speck". Force neon/dream rim style + large numeric scale; hub = members[0].
+ * Cast-detail: real outfitId from vibe+archetype (coat/cloak wedge); style from OUTFIT.
  */
 export function ensureCastPresence(cast, opts = {}) {
   if (!cast) return cast;
@@ -1272,6 +1404,7 @@ export function ensureCastPresence(cast, opts = {}) {
 
   // Phone LED: Visual targetFrac ~0.60h × (dirScale/1.55). Floor high so body
   // cannot collapse to a dot even if Visual clamps mid-pipeline.
+  // HOLD-1345: numeric scale ≥2.4 (spoken/scary ≥2.0 ok)
   const hubScale = sparseMood ? 2.0 : 2.4;
   const hubOpacity = 1;
   const hubPresence = 1;
@@ -1282,15 +1415,15 @@ export function ensureCastPresence(cast, opts = {}) {
     cast.action = cast.action && cast.action !== 'dissolve' ? cast.action : 'walk';
   }
 
-  // Readable on dark LED walls — silhouette fill is near-black (invisible on rain/neon)
-  const readableStyle = (sparseMood ? 'dream' : 'neon');
   cast.characterId = cast.characterId || (sparseMood ? 'close_confessor' : 'path_walker_dawn');
-  cast.outfitId = cast.outfitId === 'empty_chair'
-    ? (sparseMood ? 'desk_lamp' : 'neon_trim')
-    : (cast.outfitId || (sparseMood ? 'desk_lamp' : 'stage_gloss'));
   cast.archetype = (cast.archetype === 'nature_fauna' || !cast.archetype)
     ? (sparseMood ? 'spoken_intimate' : 'fg_performer')
     : cast.archetype;
+  // Real outfit from vibe+archetype (not neon-only stage_gloss default)
+  cast.outfitId = _resolveOutfitId(cast, { speechLike, vibeFamily, sectionType });
+  const readableStyle = _readableStyleForOutfit(
+    cast.outfitId, sparseMood, vibeFamily, cast.style
+  );
   cast.style = readableStyle;
   cast.placement = 'foreground';
   cast.opacity = hubOpacity;
@@ -1315,7 +1448,12 @@ export function ensureCastPresence(cast, opts = {}) {
       action: cast.action || 'walk',
       roleId: 'vocalish',
       holdSilent: false,
-      readableCast: true
+      readableCast: true,
+      // Carry dance fields if already stamped (scenePlan may re-apply after)
+      danceIntent: cast.danceIntent || null,
+      danceEnergy: cast.danceEnergy || 0,
+      anim: cast.danceIntent || null,
+      dance: !!cast.dance
     }];
   }
 
@@ -1324,7 +1462,10 @@ export function ensureCastPresence(cast, opts = {}) {
     m.scale = _numericScale(m.scale, 1.2);
     if (typeof m.opacity === 'string') m.opacity = Number(m.opacity) || hubOpacity;
     if (m.kind === 'none' || m.kind === 'fauna') m.kind = cast.kind || 'traveler';
-    if (m.outfitId === 'empty_chair') m.outfitId = cast.outfitId;
+    // Always non-empty outfitId on members (Characters-on acceptance)
+    if (!m.outfitId || m.outfitId === 'empty_chair') {
+      m.outfitId = cast.outfitId;
+    }
     m.holdSilent = false;
   }
 
@@ -1336,7 +1477,9 @@ export function ensureCastPresence(cast, opts = {}) {
 
   const hub = members[hubIdx];
   hub.characterId = hub.characterId || cast.characterId;
-  hub.outfitId = (hub.outfitId === 'empty_chair' ? cast.outfitId : hub.outfitId) || cast.outfitId;
+  hub.outfitId = (!hub.outfitId || hub.outfitId === 'empty_chair')
+    ? cast.outfitId
+    : hub.outfitId;
   hub.archetype = (hub.archetype === 'nature_fauna' ? cast.archetype : hub.archetype) || cast.archetype;
   hub.kind = (hub.kind && hub.kind !== 'none' && hub.kind !== 'fauna')
     ? hub.kind
@@ -1366,6 +1509,17 @@ export function ensureCastPresence(cast, opts = {}) {
   if (sectionType === 'verse' || sectionType === 'pre' || sectionType === 'intro'
       || sparseMood || sectionType === 'outro') {
     members = [hub];
+  }
+
+  // Final pass: every remaining member has outfitId + readable style
+  for (const m of members) {
+    if (!m) continue;
+    if (!m.outfitId || m.outfitId === 'empty_chair') m.outfitId = cast.outfitId;
+    if (m === hub || m.roleId === 'vocalish' || m.roleId === 'lead') {
+      m.style = readableStyle;
+    } else if (!m.style || m.style === 'silhouette') {
+      m.style = _readableStyleForOutfit(m.outfitId, sparseMood, vibeFamily, m.style);
+    }
   }
 
   cast.characterId = hub.characterId;

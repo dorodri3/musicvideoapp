@@ -6,7 +6,7 @@
 import { ContinuityEngine } from '../scene/continuity.js';
 import { CameraSystem } from '../camera/system.js';
 import { LightingSystem } from '../lighting/system.js';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=hold1345-cast';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=cast-detail1';
 import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js';
 import { getMotionComfort } from '../a11y/motionPrefs.js';
 

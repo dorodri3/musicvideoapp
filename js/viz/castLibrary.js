@@ -50,8 +50,8 @@ export const STYLES = ['silhouette', 'neon', 'dream'];
 export const OUTFITS = {
   linen_dawn: {
     palette: { fill: 'rgba(28,24,20,0.9)', rim: 'rgba(255,230,200,0.55)', accent: 'rgba(255,214,170,0.4)', shadow: 'rgba(20,16,12,0.5)' },
-    accessories: [],
-    shape: { bodyW: 16.2, bodyH: 48.6, headR: 9.45, lean: 0, torn: 0, cloak: 0 },
+    accessories: ['coat'],
+    shape: { bodyW: 16.2, bodyH: 48.6, headR: 9.45, lean: 0, torn: 0, cloak: 0, longCoat: true },
     rimRoughness: 0.15,
     keyLight: 'warm_soft'
   },
@@ -63,7 +63,7 @@ export const OUTFITS = {
   },
   water_gloss: {
     palette: { fill: 'rgba(14,20,28,0.9)', rim: 'rgba(160,200,230,0.6)', accent: 'rgba(120,180,220,0.45)', shadow: 'rgba(8,12,20,0.5)' },
-    accessories: [],
+    accessories: ['trim'],
     shape: { bodyW: 14.85, bodyH: 48.6, headR: 8.78, lean: 0, torn: 0, cloak: 0 },
     rimRoughness: 0.1
   },
@@ -75,7 +75,7 @@ export const OUTFITS = {
   },
   neon_trim: {
     palette: { fill: 'rgba(6,8,12,0.95)', rim: 'rgba(80,255,230,0.95)', accent: 'rgba(255,60,180,0.7)', shadow: 'rgba(4,6,10,0.55)' },
-    accessories: [],
+    accessories: ['trim', 'coat'],
     shape: { bodyW: 14.85, bodyH: 48.6, headR: 8.78, lean: 0.12, torn: 0, cloak: 0 },
     rimRoughness: 0.05
   },
@@ -87,19 +87,19 @@ export const OUTFITS = {
   },
   chrome_candy: {
     palette: { fill: 'rgba(30,16,40,0.9)', rim: 'rgba(255,140,220,0.95)', accent: 'rgba(120,255,220,0.7)', shadow: 'rgba(20,8,28,0.5)' },
-    accessories: [],
+    accessories: ['coat', 'trim'],
     shape: { bodyW: 16.2, bodyH: 45.9, headR: 10.12, lean: 0.05, torn: 0, cloak: 0 },
     rimRoughness: 0.08
   },
   stage_gloss: {
     palette: { fill: 'rgba(16,12,20,0.92)', rim: 'rgba(255,230,180,0.75)', accent: 'rgba(255,200,120,0.55)', shadow: 'rgba(10,8,14,0.55)' },
-    accessories: [],
+    accessories: ['coat', 'trim'],
     shape: { bodyW: 16.2, bodyH: 48.6, headR: 9.45, lean: 0, torn: 0, cloak: 0 },
     rimRoughness: 0.12
   },
   color_block_crew: {
     palette: { fill: 'rgba(12,14,22,0.92)', rim: 'rgba(80,160,255,0.7)', accent: 'rgba(255,90,120,0.6)', shadow: 'rgba(8,8,14,0.55)' },
-    accessories: [],
+    accessories: ['trim'],
     shape: { bodyW: 16.2, bodyH: 48.6, headR: 9.45, lean: 0.04, torn: 0, cloak: 0 },
     rimRoughness: 0.1
   },
@@ -111,7 +111,7 @@ export const OUTFITS = {
   },
   industrial_hazard: {
     palette: { fill: 'rgba(18,20,18,0.94)', rim: 'rgba(180,200,80,0.55)', accent: 'rgba(100,120,60,0.4)', shadow: 'rgba(10,12,10,0.6)' },
-    accessories: [],
+    accessories: ['coat', 'trim'],
     shape: { bodyW: 18.9, bodyH: 48.6, headR: 9.45, lean: 0, torn: 0.15, cloak: 0 },
     rimRoughness: 0.4
   },
@@ -347,6 +347,15 @@ export function resolveCastLook(spec, vibe) {
   if (shape.torn > 0.4 && !accessories.includes('torn')) accessories.push('torn');
   if (shape.obscureFace && !accessories.includes('obscure')) accessories.push('obscure');
   if (arch.fauna && !accessories.includes('fauna')) accessories.push('fauna');
+  // Phone silhouette: longCoat reads as coat wedge; neon/candy/crew get one trim accent
+  if ((shape.longCoat || outfitId === 'after_hours_red' || outfitId === 'ember_coat' || outfitId === 'dread_coat' ||
+       outfitId === 'highway_dust' || outfitId === 'aisle_linen') && !accessories.includes('coat')) {
+    accessories.push('coat');
+  }
+  if ((outfitId === 'neon_trim' || outfitId === 'chrome_candy' || outfitId === 'stage_gloss' ||
+       outfitId === 'color_block_crew' || outfitId === 'water_gloss') && !accessories.includes('trim')) {
+    accessories.push('trim');
+  }
 
   const holdSilent = !!s.holdSilent;
   const emptyChair =
@@ -457,7 +466,8 @@ function _drawBodyPath(ctx, x, bodyTop, bodyH, bodyW, lean, torn, cloak, longCoa
   const leanPx = lean * 10 * scale;
   const top = bodyTop;
   const bot = bodyTop + bodyH * scale;
-  const flare = longCoat || cloak > 0.3 ? hw * (1.15 + cloak * 0.35) : hw;
+  // Bold hem flare — coat/cloak must read at phone distance (not near-equal blob)
+  const flare = longCoat || cloak > 0.25 ? hw * (1.42 + cloak * 0.55) : hw;
 
   ctx.beginPath();
   ctx.moveTo(x - hw + leanPx * 0.3, top);
@@ -476,13 +486,13 @@ function _drawBodyPath(ctx, x, bodyTop, bodyH, bodyW, lean, torn, cloak, longCoa
 }
 
 function _drawEmberParticles(ctx, x, bodyTop, bodyH, scale, t, pal) {
-  ctx.fillStyle = pal.accent;
-  for (let p = 0; p < 4; p++) {
-    const px = x + Math.sin(t * 1.2 + p * 1.7) * 10 * scale;
-    const py = bodyTop + bodyH * scale * (0.2 + (p * 0.18) % 0.7) - (t * 8 + p * 5) % (bodyH * scale);
-    ctx.globalAlpha = 0.25 + (p % 3) * 0.12;
+  ctx.fillStyle = pal.accent || pal.rim;
+  for (let p = 0; p < 6; p++) {
+    const px = x + Math.sin(t * 1.2 + p * 1.7) * 14 * scale;
+    const py = bodyTop + bodyH * scale * (0.15 + (p * 0.16) % 0.75) - ((t * 10 + p * 6) % (bodyH * scale));
+    ctx.globalAlpha = 0.35 + (p % 3) * 0.15;
     ctx.beginPath();
-    ctx.arc(px, py, 1.2 + (p % 2), 0, Math.PI * 2);
+    ctx.arc(px, py, (2.2 + (p % 3) * 0.9) * Math.max(1, scale * 0.22), 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -501,6 +511,208 @@ function _drawStarParticles(ctx, x, bodyTop, bodyH, scale, t, pal) {
   }
 }
 
+
+/**
+ * Bold geometric outfit silhouette diffs — phone/LED distance.
+ * Coat flare / cloak cape wedge / ONE trim accent rim / hood arc.
+ * Never face detail (MUSIC-BRIEF cast-detail).
+ */
+function _drawOutfitSilhouetteDiffs(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, look, opacity) {
+  const pal = look.palette || {};
+  const shape = look.shape || {};
+  const acc = look.accessories || [];
+  const outfitId = look.outfitId || '';
+  const leanPx = lean * 10 * scale;
+  const hw = (bodyW * scale) / 2;
+  const bot = bodyTop + bodyH * scale;
+  const hasCoat = acc.includes('coat') || !!shape.longCoat;
+  const hasCloak = acc.includes('cloak') || (shape.cloak || 0) > 0.35;
+  const hasTrim = acc.includes('trim') || /neon_trim|chrome_candy|stage_gloss|color_block|water_gloss/.test(outfitId);
+  const hasHood = acc.includes('hood');
+  const hasEmber = acc.includes('ember');
+  const rim = _brightRim(pal.rim || 'rgba(255,230,200,0.7)', 0.78);
+  const accent = pal.accent || rim;
+  const shadow = pal.shadow || pal.fill || 'rgba(8,8,12,0.85)';
+
+  // --- CLOAK / CAPE WEDGE (behind-readable drape) ---
+  if (hasCloak) {
+    const cloakAmt = Math.max(0.45, shape.cloak || 0.7);
+    const wing = hw * (1.65 + cloakAmt * 0.9);
+    ctx.save();
+    ctx.globalAlpha = opacity * 0.72;
+    ctx.fillStyle = shadow;
+    ctx.beginPath();
+    ctx.moveTo(fx - 3 * scale + leanPx * 0.2, bodyTop + 2 * scale);
+    ctx.quadraticCurveTo(fx - wing + leanPx, bodyTop + bodyH * scale * 0.45, fx - wing * 0.85 + leanPx, bot);
+    ctx.lineTo(fx + wing * 0.55 + leanPx, bot);
+    ctx.quadraticCurveTo(fx + wing * 0.7 + leanPx, bodyTop + bodyH * scale * 0.4, fx + 4 * scale + leanPx * 0.2, bodyTop + 4 * scale);
+    ctx.closePath();
+    ctx.fill();
+    // Thick cape-edge rim (one accent, not texture soup)
+    ctx.globalAlpha = opacity * 0.85;
+    ctx.strokeStyle = rim;
+    ctx.lineWidth = Math.max(2.8, 3.4 * scale * 0.35);
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- COAT FLARE / LAPEL / COLLAR (outer silhouette wedge) ---
+  if (hasCoat) {
+    const coatFlare = hw * (shape.longCoat ? 1.55 : 1.35);
+    const shoulderY = bodyTop + bodyH * scale * 0.08;
+    const hipY = bodyTop + bodyH * scale * 0.55;
+    ctx.save();
+    // Open coat panels — left + right wedges wider than body
+    ctx.globalAlpha = opacity * 0.55;
+    ctx.fillStyle = shadow;
+    ctx.beginPath();
+    ctx.moveTo(fx - hw * 0.55 + leanPx * 0.3, shoulderY);
+    ctx.lineTo(fx - coatFlare + leanPx, bot);
+    ctx.lineTo(fx - hw * 0.15 + leanPx, bot);
+    ctx.lineTo(fx - hw * 0.2 + leanPx * 0.3, hipY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(fx + hw * 0.55 + leanPx * 0.3, shoulderY);
+    ctx.lineTo(fx + coatFlare + leanPx, bot);
+    ctx.lineTo(fx + hw * 0.15 + leanPx, bot);
+    ctx.lineTo(fx + hw * 0.2 + leanPx * 0.3, hipY);
+    ctx.closePath();
+    ctx.fill();
+    // Collar / lapel triangles at shoulders (readable wedge, not face)
+    ctx.globalAlpha = opacity * 0.9;
+    ctx.fillStyle = rim;
+    const colW = 5.5 * scale;
+    const colH = 6.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(fx - hw * 0.15 + leanPx * 0.25, bodyTop + 1 * scale);
+    ctx.lineTo(fx - hw * 0.15 - colW + leanPx * 0.25, bodyTop + colH);
+    ctx.lineTo(fx - hw * 0.05 + leanPx * 0.25, bodyTop + colH * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(fx + hw * 0.15 + leanPx * 0.25, bodyTop + 1 * scale);
+    ctx.lineTo(fx + hw * 0.15 + colW + leanPx * 0.25, bodyTop + colH);
+    ctx.lineTo(fx + hw * 0.05 + leanPx * 0.25, bodyTop + colH * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    // Thick coat outer rim (hem + sides)
+    ctx.globalAlpha = opacity * 0.92;
+    ctx.strokeStyle = rim;
+    ctx.lineWidth = Math.max(3.0, 3.8 * scale * 0.38);
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(fx - hw * 0.5 + leanPx * 0.3, shoulderY);
+    ctx.lineTo(fx - coatFlare + leanPx, bot);
+    ctx.moveTo(fx + hw * 0.5 + leanPx * 0.3, shoulderY);
+    ctx.lineTo(fx + coatFlare + leanPx, bot);
+    // Hem bar
+    ctx.moveTo(fx - coatFlare + leanPx, bot);
+    ctx.lineTo(fx + coatFlare + leanPx, bot);
+    ctx.stroke();
+    // Front opening slit (one vertical accent)
+    ctx.lineWidth = Math.max(2.2, 2.6 * scale * 0.32);
+    ctx.beginPath();
+    ctx.moveTo(fx + leanPx * 0.2, shoulderY + 2 * scale);
+    ctx.lineTo(fx + leanPx * 0.35, bot - 2 * scale);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- ONE TRIM ACCENT RIM (belt / cuff / edge stripe — not texture soup) ---
+  if (hasTrim) {
+    ctx.save();
+    ctx.globalAlpha = opacity * 0.95;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(3.2, 4.2 * scale * 0.42);
+    ctx.lineCap = 'round';
+    // Vertical torso edge stripe (dominant phone read)
+    ctx.beginPath();
+    ctx.moveTo(fx + hw * 0.72 + leanPx, bodyTop + bodyH * scale * 0.12);
+    ctx.lineTo(fx + hw * 0.95 + leanPx, bodyTop + bodyH * scale * 0.88);
+    ctx.stroke();
+    // Shoulder collar flash bar
+    ctx.strokeStyle = rim;
+    ctx.lineWidth = Math.max(2.8, 3.6 * scale * 0.38);
+    ctx.beginPath();
+    ctx.moveTo(fx - hw * 0.85 + leanPx * 0.2, bodyTop + bodyH * scale * 0.1);
+    ctx.lineTo(fx + hw * 0.85 + leanPx * 0.2, bodyTop + bodyH * scale * 0.1);
+    ctx.stroke();
+    // Belt / waist tick (single accent)
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(2.6, 3.2 * scale * 0.36);
+    ctx.beginPath();
+    ctx.moveTo(fx - hw * 0.7 + leanPx, bodyTop + bodyH * scale * 0.48);
+    ctx.lineTo(fx + hw * 0.7 + leanPx, bodyTop + bodyH * scale * 0.48);
+    ctx.stroke();
+    // Cuff ticks at wrist height
+    const cuffY = bodyTop + bodyH * scale * 0.72;
+    ctx.lineWidth = Math.max(2.4, 3.0 * scale * 0.34);
+    ctx.beginPath();
+    ctx.moveTo(fx - hw * 1.05 + leanPx, cuffY);
+    ctx.lineTo(fx - hw * 0.55 + leanPx, cuffY);
+    ctx.moveTo(fx + hw * 0.55 + leanPx, cuffY);
+    ctx.lineTo(fx + hw * 1.05 + leanPx, cuffY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- HOOD arc (over head silhouette, not face) ---
+  if (hasHood) {
+    ctx.save();
+    ctx.globalAlpha = opacity * 0.88;
+    ctx.strokeStyle = rim;
+    ctx.fillStyle = shadow;
+    ctx.lineWidth = Math.max(2.8, 3.4 * scale * 0.36);
+    const hr = Math.max(hw * 0.95, (shape.headR || 9) * scale * 1.35);
+    ctx.beginPath();
+    ctx.arc(fx + leanPx * 0.2, bodyTop - 1 * scale, hr, Math.PI * 1.05, Math.PI * 1.95, false);
+    ctx.stroke();
+    ctx.globalAlpha = opacity * 0.4;
+    ctx.beginPath();
+    ctx.arc(fx + leanPx * 0.2, bodyTop + 2 * scale, hr * 0.95, Math.PI * 1.1, Math.PI * 1.9, false);
+    ctx.lineTo(fx + leanPx * 0.2, bodyTop + 8 * scale);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // --- EMBER coat-edge glow (ash_survivor) ---
+  if (hasEmber) {
+    ctx.save();
+    ctx.globalAlpha = opacity * 0.7;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(2.4, 3.0 * scale * 0.32);
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 8 + scale * 2;
+    const coatFlare = hw * 1.5;
+    ctx.beginPath();
+    ctx.moveTo(fx - coatFlare + leanPx, bot - 4 * scale);
+    ctx.lineTo(fx - hw * 0.4 + leanPx, bodyTop + bodyH * scale * 0.25);
+    ctx.moveTo(fx + coatFlare + leanPx, bot - 4 * scale);
+    ctx.lineTo(fx + hw * 0.4 + leanPx, bodyTop + bodyH * scale * 0.25);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  // Boots / stance ticks — readable heel stance at phone distance
+  if (hasCoat || hasCloak || hasTrim) {
+    ctx.save();
+    ctx.globalAlpha = opacity * 0.7;
+    ctx.fillStyle = rim;
+    const bootW = 4.2 * scale;
+    const bootH = 2.4 * scale;
+    ctx.beginPath();
+    ctx.ellipse(fx - hw * 0.45 + leanPx, bot - bootH * 0.15, bootW, bootH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(fx + hw * 0.45 + leanPx, bot - bootH * 0.15, bootW, bootH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
 
 function _brightRim(rim, floorA) {
   // Ensure rim alpha ≥ floorA for neon/silhouette readability
@@ -531,7 +743,7 @@ function _ensureFillAlpha(fill, minA) {
  * @returns {{ active: boolean, motion: string, amp: number, bob: number, leanAdd: number, rot: number, footL: number, footR: number, hipShift: number }}
  */
 export function applyDanceMotion(opts = {}) {
-  const idle = { active: false, motion: 'none', amp: 0, bob: 0, leanAdd: 0, rot: 0, footL: 0, footR: 0, hipShift: 0 };
+  const idle = { active: false, motion: 'none', amp: 0, bob: 0, leanAdd: 0, rot: 0, footL: 0, footR: 0, hipShift: 0, intentBoost: false };
   if (!opts || opts.holdSilent) return idle;
 
   const action = (opts.action || 'stand').toString().toLowerCase();
@@ -602,50 +814,55 @@ export function applyDanceMotion(opts = {}) {
     motion = 'step';
   }
 
-  // Medium density amp (groove U-curve) — not seizure
+  // Amp: stronger when danceIntent/dance set (phone-readable energy); still soft-clip safe
   let drive = Math.max(kick, snare, hats);
-  if (danceAction || intentOn || dancerArch || dancerKind) drive = Math.max(drive, 0.55);
-  let amp = 0.28 + Math.min(1, drive) * 0.5; // ~0.28..0.78
-  if (speechLike || arch === 'spoken_intimate') amp *= 0.3;
+  const intentBoost = !!(danceAction || intentOn || dancerArch || dancerKind);
+  if (intentBoost) drive = Math.max(drive, 0.72);
+  let amp = (intentBoost ? 0.42 : 0.28) + Math.min(1, drive) * (intentBoost ? 0.55 : 0.5); // ~0.42..0.97 intent
+  if (speechLike || arch === 'spoken_intimate') amp *= 0.3; // spoken stay near-still
   if (genreMicro) amp *= 0.28; // jazz/gospel/folk micro-gesture only
-  if (genreHigh) amp = Math.min(0.85, amp * 1.12); // pop/K-pop formation ok
+  if (genreHigh) amp = Math.min(0.98, amp * 1.18); // pop/K-pop formation ok
+  // Energy/section lift on chorus when intent already on
+  if (intentBoost && section === 'chorus') amp = Math.min(1.0, amp * 1.12);
 
   const t = opts.t || 0;
   const i = opts.i || 0;
   const scale = Math.max(0.35, Number(opts.scale) || 1);
   // Kick-phased clock for footfalls (ROLE-AGENTS: kick→footfalls)
-  const kickPhase = t * (2.4 + kick * 2.2) + i * 0.9;
-  const snarePhase = t * (1.8 + snare * 1.5) + i * 0.6;
+  const kickPhase = t * (2.6 + kick * 2.6) + i * 0.9;
+  const snarePhase = t * (2.0 + snare * 1.8) + i * 0.6;
+  // Motion gain — obvious on phone when danceIntent set; quieter otherwise
+  const gain = intentBoost ? 1.85 : 1.0;
 
   let bob = 0, leanAdd = 0, rot = 0, footL = 0, footR = 0, hipShift = 0;
 
   if (motion === 'step') {
-    // Alternate foot offset + slight vertical bob phased to kick (compress down — feet stay on baseY)
+    // Alternate foot offset + vertical bob phased to kick (compress down — feet stay on baseY)
     const alt = Math.sin(kickPhase) >= 0 ? 1 : -1;
-    const stepAmp = amp * 5.5 * scale;
+    const stepAmp = amp * 9.5 * scale * gain;
     footL = alt * stepAmp;
     footR = -alt * stepAmp * 0.9;
-    bob = Math.max(0, Math.sin(kickPhase)) * amp * 3.2 * scale; // positive = bodyTop down
-    leanAdd = Math.sin(kickPhase * 0.5) * amp * 0.06;
-    hipShift = alt * amp * 2.2 * scale;
+    bob = Math.max(0, Math.sin(kickPhase)) * amp * 5.8 * scale * gain; // positive = bodyTop down
+    leanAdd = Math.sin(kickPhase * 0.5) * amp * 0.14 * gain;
+    hipShift = alt * amp * 5.8 * scale * gain;
   } else if (motion === 'sway') {
-    // Hip/shoulder lean sin(t) amplified by snare/hats
+    // Hip/shoulder lean sin(t) amplified by snare/hats — clear sway when intent
     const swell = 0.55 + snare * 0.55 + hats * 0.35;
-    leanAdd = Math.sin(snarePhase) * amp * 0.22 * swell;
-    hipShift = Math.sin(snarePhase) * amp * 4.5 * scale * swell;
-    bob = Math.max(0, Math.sin(snarePhase * 2)) * amp * 1.4 * scale;
-    footL = Math.sin(snarePhase) * amp * 1.5 * scale;
+    leanAdd = Math.sin(snarePhase) * amp * 0.38 * swell * gain;
+    hipShift = Math.sin(snarePhase) * amp * 8.5 * scale * swell * gain;
+    bob = Math.max(0, Math.sin(snarePhase * 2)) * amp * 2.8 * scale * gain;
+    footL = Math.sin(snarePhase) * amp * 3.2 * scale * gain;
     footR = -footL;
   } else if (motion === 'spin') {
     // Silhouette rotate / mirrored lean sweep — pivot at feet, not full 3D
-    const spinDrive = 0.6 + hats * 0.5 + (section === 'chorus' ? 0.25 : 0);
-    rot = Math.sin(t * 1.7 + i) * amp * 0.22 * spinDrive; // ~±0.12..0.2 rad
-    leanAdd = Math.sin(t * 1.7 + i + Math.PI * 0.5) * amp * 0.12 * spinDrive;
-    hipShift = Math.sin(t * 1.7 + i) * amp * 3 * scale;
-    bob = Math.max(0, Math.sin(t * 3.4 + i)) * amp * 1.6 * scale;
+    const spinDrive = 0.7 + hats * 0.55 + (section === 'chorus' ? 0.3 : 0);
+    rot = Math.sin(t * 1.9 + i) * amp * 0.38 * spinDrive * Math.min(1.4, gain); // ~±0.2..0.35 rad
+    leanAdd = Math.sin(t * 1.9 + i + Math.PI * 0.5) * amp * 0.2 * spinDrive * gain;
+    hipShift = Math.sin(t * 1.9 + i) * amp * 6.5 * scale * gain;
+    bob = Math.max(0, Math.sin(t * 3.8 + i)) * amp * 3.2 * scale * gain;
   }
 
-  return { active: true, motion, amp, bob, leanAdd, rot, footL, footR, hipShift };
+  return { active: true, motion, amp, bob, leanAdd, rot, footL, footR, hipShift, intentBoost };
 }
 
 /**
@@ -712,10 +929,11 @@ export function drawCastFigure(ctx, opts) {
   }
   // Dance bob compresses DOWN toward baseY (no sticker float)
   if (dance.active && dance.bob) {
-    bodyTop += Math.min(bodyH * scale * 0.12, dance.bob);
+    bodyTop += Math.min(bodyH * scale * 0.18, dance.bob);
   }
 
-  const fx = x0 + (dance.hipShift || 0) * 0.15;
+  // Hip shift must read on phone — was *0.15 (near-frozen); intent gets fuller travel
+  const fx = x0 + (dance.hipShift || 0) * (dance.intentBoost ? 0.72 : 0.45);
   const headY = bodyTop;
   const chestY = bodyTop + bodyH * scale * 0.35;
   const leanPx = lean * 10 * scale;
@@ -758,15 +976,16 @@ export function drawCastFigure(ctx, opts) {
     ctx.fill();
   }
 
-  // Cloak flare behind body
+  // Cloak underlay (bold cape wedge + coat/trim drawn after body via _drawOutfitSilhouetteDiffs)
   if ((shape.cloak || 0) > 0.35 || (look.accessories && look.accessories.includes('cloak'))) {
     ctx.fillStyle = pal.shadow || pal.fill;
-    ctx.globalAlpha = opacity * 0.55;
+    ctx.globalAlpha = opacity * 0.4;
+    const wing = (bodyW * scale) * 0.95;
     ctx.beginPath();
     ctx.moveTo(fx - 4 * scale + leanPx * 0.2, bodyTop + 4 * scale);
-    ctx.quadraticCurveTo(fx - 18 * scale + leanPx, baseY - 4 * scale, fx - 8 * scale + leanPx, baseY);
-    ctx.lineTo(fx + 10 * scale + leanPx, baseY);
-    ctx.quadraticCurveTo(fx + 16 * scale + leanPx, baseY - 8 * scale, fx + 5 * scale + leanPx * 0.2, bodyTop + 6 * scale);
+    ctx.quadraticCurveTo(fx - wing + leanPx, baseY - 4 * scale, fx - wing * 0.55 + leanPx, baseY);
+    ctx.lineTo(fx + wing * 0.45 + leanPx, baseY);
+    ctx.quadraticCurveTo(fx + wing * 0.75 + leanPx, baseY - 8 * scale, fx + 5 * scale + leanPx * 0.2, bodyTop + 6 * scale);
     ctx.closePath();
     ctx.fill();
     ctx.globalAlpha = opacity;
@@ -834,6 +1053,9 @@ export function drawCastFigure(ctx, opts) {
     }
   }
 
+  // Bold outfit silhouette diffs (coat/cloak/trim/hood/ember) — phone-readable wedges, no face detail
+  _drawOutfitSilhouetteDiffs(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, look, opacity);
+
   // Obscure face (dread)
   if (shape.obscureFace || (look.accessories && look.accessories.includes('obscure'))) {
     ctx.fillStyle = pal.shadow || 'rgba(4,4,8,0.75)';
@@ -870,18 +1092,19 @@ export function drawCastFigure(ctx, opts) {
     ctx.globalAlpha = prev;
   }
 
-  // Readable dance feet on ground plane (step/sway) — contact, not float
-  if (dance.active && (dance.motion === 'step' || dance.motion === 'sway')) {
+  // Readable dance feet on ground plane (step/sway/spin) — contact, not float
+  if (dance.active && (dance.motion === 'step' || dance.motion === 'sway' || dance.motion === 'spin')) {
     const prevA = ctx.globalAlpha;
-    ctx.globalAlpha = opacity * (0.35 + dance.amp * 0.35);
-    ctx.fillStyle = (pal && pal.rim) ? pal.rim : 'rgba(255,240,220,0.55)';
-    const fw = 3.2 * scale;
-    const fh = 1.6 * scale;
+    const feetGain = dance.intentBoost ? 1.35 : 1.0;
+    ctx.globalAlpha = opacity * Math.min(0.95, (0.45 + dance.amp * 0.45) * feetGain);
+    ctx.fillStyle = (pal && pal.rim) ? _brightRim(pal.rim, 0.8) : 'rgba(255,240,220,0.75)';
+    const fw = 4.8 * scale * feetGain;
+    const fh = 2.4 * scale * feetGain;
     ctx.beginPath();
-    ctx.ellipse(fx - 5 * scale + dance.footL, baseY - fh * 0.2, fw, fh, 0, 0, Math.PI * 2);
+    ctx.ellipse(fx - 6.5 * scale + (dance.footL || 0), baseY - fh * 0.2, fw, fh, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse(fx + 5 * scale + dance.footR, baseY - fh * 0.2, fw, fh, 0, 0, Math.PI * 2);
+    ctx.ellipse(fx + 6.5 * scale + (dance.footR || 0), baseY - fh * 0.2, fw, fh, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = prevA;
   }

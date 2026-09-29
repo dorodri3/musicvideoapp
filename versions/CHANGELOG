@@ -34,3 +34,4 @@ Worlds Engine: QA-2129 vibe→pack routing fix
 - Peaceful escapes neon via meadow/misty/forest leads; spoken/scary/chaotic live leads are similarly protected.
 - Scope: only js/director/scenePlan.js and js/director/vibeCast.js.
 node --check: scenePlan.js + vibeCast.js OK
+v2-scene-20260930-061724-cast-detail — Scene cast-detail: outfitId+danceIntent from vibe+archetype; HOLD-1345 floors
