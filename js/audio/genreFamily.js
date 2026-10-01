@@ -26,7 +26,7 @@ const FAMILY_ALIASES = [
 ];
 
 /** Families protected from harsh→metal false flips */
-export const HARSH_PROTECTED = new Set(['gospel', 'pop', 'kpop', 'rnb', 'folk', 'classical', 'latin', 'afro']);
+export const HARSH_PROTECTED = new Set(['gospel', 'pop', 'kpop', 'rnb', 'folk', 'classical', 'soundtrack', 'latin', 'afro']);
 
 /**
  * Map free-text (ID3 genre, fantasy, styles) → genreFamily or null.

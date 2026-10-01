@@ -3,12 +3,73 @@
  * Roles animate HOW the world moves; lyrics direct WHAT world.
  * Prefer audio.roles || audio.instruments (see js/audio/ROLES.md).
  */
-import { ContinuityEngine } from '../scene/continuity.js';
+import { ContinuityEngine } from '../scene/continuity.js?v=cohere7';
 import { CameraSystem } from '../camera/system.js';
-import { LightingSystem } from '../lighting/system.js';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=vibe-match1';
-import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js';
+import { LightingSystem } from '../lighting/system.js?v=cohere7';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=cohere7';
+import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=cohere7';
 import { getMotionComfort } from '../a11y/motionPrefs.js';
+
+
+/** HOLD-0330: module-level HUD — never depends on prototype lookup (TypeError-proof). */
+function drawDebugHudImpl(ctx, w, h, directive, audio) {
+  let show = true;
+  try {
+    const q = (typeof location !== 'undefined' && location.search) ? location.search : '';
+    if (/[?&]debug=0(?:&|$)/.test(q)) show = false;
+    else if (/[?&]debug=1(?:&|$)/.test(q)) show = true;
+  } catch (_) { /* soft */ }
+  if (!show) return;
+
+  const vibe = audio?.vibe || {};
+  const moment = audio?.moment || vibe?.moment || {};
+  const hud = directive?.hardHud || {};
+  const preset = directive?.preset || hud.preset || '—';
+  const hardIds = hud.hardLockIds || ['metal_hall', 'reality_fracture', 'apocalyptic_warzone', 'red_void', 'storm'];
+  const lines = [
+    'LS DEBUG cohere7',
+    `pinArmed ${!!(vibe.pinArmed || moment.pinArmed || hud.pinArmed)}  martial ${!!(vibe.martial || moment.martial || hud.martial)}`,
+    `orchMart ${!!(vibe.orchestralMartial || moment.orchestralMartial || hud.orchestralMartial)}  softClear ${!!(vibe.softClear || moment.softClear)}`,
+    `forbidPast ${!!(directive?.forbidPastoral || vibe.forbidPastoral || moment.forbidPastoral)}  aggLock ${!!(directive?.aggressionLock || vibe.aggressionLock || moment.aggressionLock)}`,
+    `hardOnly ${!!(directive?.hardOnly || hud.hardOnly)}  nuclear ${!!hud.nuclearHard}  latch ${!!hud.latchLive}`,
+    `hotMs ${hud.hotMs ?? '—'}  energy ${hud.energy ?? (audio?.energy != null ? Number(audio.energy).toFixed(3) : '—')}  kick ${hud.kick ?? '—'}`,
+    `preset ${preset}  pack ${directive?.packFamily || hud.packFamily || '—'}  ladder ${hud.ladder || vibe.ladder || '—'}`
+  ];
+
+  // Paint never throws — box + text each guarded (empty B5 box = text fail)
+  try {
+    ctx.save();
+    try { ctx.setTransform(1, 0, 0, 1, 0, 0); } catch (_) { /* soft */ }
+    const pad = 8;
+    const lineH = 14;
+    const boxW = Math.min((w || 400) - 16, 460);
+    const boxH = pad * 2 + lines.length * lineH;
+    try {
+      ctx.globalAlpha = 0.78;
+      ctx.fillStyle = 'rgba(0,0,0,0.78)';
+      ctx.fillRect(8, 8, boxW, boxH);
+    } catch (_) { /* soft */ }
+    try {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#7CFFB2';
+      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      let y = 8 + pad;
+      for (const line of lines) {
+        ctx.fillText(String(line), 8 + pad, y);
+        y += lineH;
+      }
+    } catch (_) {
+      try {
+        ctx.fillStyle = '#7CFFB2';
+        ctx.font = '12px monospace';
+        ctx.fillText('LS DEBUG cohere7 (fallback)', 16, 20);
+      } catch (__) { /* soft */ }
+    }
+    try { ctx.restore(); } catch (_) { /* soft */ }
+  } catch (_) { /* never throw from HUD */ }
+}
 
 export class Renderer {
   constructor(canvas) {
@@ -44,6 +105,13 @@ export class Renderer {
     this._lastLyricStickExpire = null;
     this._lastSectionChangeId = null;
     this._vibeMatch = null; // live aggression ladder (WAVE vibe-match)
+    this._aggSticky = 0; // decay-hold so soft packs can't flash pastoral mid-aggression
+    this._hardLock = false; // Audio forbidPastoral / aggressionLock / ladder=aggressive
+    this._hardHoldUntil = 0; // ms — Visual sticky hard look ≥15s once earned (pair Audio pin)
+    this._motifMemoryUntil = 0; // ms — re-emphasize motif rim after chaos cool-down
+    this._lastChaosPeakAt = 0;
+    // HOLD-0330: bind HUD on instance so missing prototype never TypeErrors
+    this._drawDebugHud = drawDebugHudImpl.bind(this);
   }
 
   setQuality(q) {
@@ -159,9 +227,46 @@ export class Renderer {
       Number(vibe.peace || 0),
       Number(vibe.calm || 0)
     );
-    if (spoken > 0.4) agg *= 1 - spoken * 0.85;
-    else if (peace > 0.55 && agg < 0.5) agg *= 1 - peace * 0.55;
+
+    // Audio hard-lock flags (QA HOLD): forbidPastoral / aggressionLock / ladder=aggressive
+    // Prefer live moment.* over smoothed vibe when present (NOW punches)
+    const moment = audio?.moment || vibe?.moment || {};
+    const ladder = (moment.ladder || vibe.ladder || '').toString().toLowerCase();
+    const forbidPastoral = !!(moment.forbidPastoral || vibe.forbidPastoral || directive?.forbidPastoral);
+    const aggressionLock = !!(moment.aggressionLock || vibe.aggressionLock || directive?.aggressionLock);
+    const ladderAgg = ladder === 'aggressive' || ladder === 'chaos';
+    const chaosN = Math.max(Number(vibe.chaos || 0), Number(vibe.chaotic || 0));
+    const momentAgg = Number(moment.aggression || 0);
+    if (Number.isFinite(momentAgg) && momentAgg > agg) agg = momentAgg;
+    // HOLD-0321: Scene nuclear hardOnly must reach Visual (cannot lose to soft paint)
+    let hardLock = forbidPastoral || aggressionLock || ladderAgg || agg >= 0.55 || chaosN > 0.55
+      || !!(directive?.hardOnly || directive?.hardLock || directive?.hardHud?.hardOnly || directive?.hardHud?.nuclearHard);
+
+    // Visual sticky hard look ≥15s once earned (Audio may dip soft mid-phrase — HOLD QA B2/B3)
+    const nowHold = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (hardLock || agg >= 0.55) {
+      this._hardHoldUntil = Math.max(this._hardHoldUntil || 0, nowHold + 15000);
+    }
+    const holdActive = nowHold < (this._hardHoldUntil || 0);
+    if (holdActive) hardLock = true;
+
+    if (hardLock) {
+      // Floor aggression; never damp for soft/spoken while lock / hold active
+      agg = Math.max(agg, aggressionLock || ladderAgg || forbidPastoral || holdActive ? 0.72 : 0.58);
+    } else {
+      if (spoken > 0.4) agg *= 1 - spoken * 0.85;
+      else if (peace > 0.55 && agg < 0.5) agg *= 1 - peace * 0.55;
+    }
     agg = Math.max(0, Math.min(1, agg));
+
+    // Sticky agg: hold floor during 15s window; short cool only after timer expires
+    if (agg >= 0.55 || hardLock || holdActive) {
+      this._aggSticky = Math.max(this._aggSticky, agg, 0.72);
+    } else {
+      this._aggSticky *= 0.965; // short cool after 15s hold ends
+      if (this._aggSticky < 0.2) this._aggSticky = 0;
+    }
+    const stickyAgg = Math.max(agg, this._aggSticky, holdActive ? 0.72 : 0);
 
     const scary = Math.max(
       Number(vibe.scary || 0),
@@ -172,36 +277,64 @@ export class Renderer {
       /tense|build|tighten/.test(dirStr) ? 0.5 : 0
     );
     const dominant = (vibe.dominant || '').toString().toLowerCase();
-    const chaosN = Math.max(Number(vibe.chaos || 0), Number(vibe.chaotic || 0));
 
-    // Worlds pack family (when present) — match lighting/motion; do not invent packs
     const pack = (
       directive?.preset || directive?.world || directive?.pack || directive?.worldId ||
-      directive?.worldPack || ''
+      directive?.worldPack || directive?.packFamily || directive?.worldFamily || ''
     ).toString().toLowerCase();
-    const packChaos = /warzone|fracture|storm|void.?red|industrial|chaos|ash|tunnel/.test(pack);
-    const packPastoral = /pastoral|forest|ocean|meadow|dream.?cloud|highway.?dusk|heal|snow/.test(pack);
-    if (packChaos) agg = Math.min(1, Math.max(agg, 0.62) + 0.08);
-    if (packPastoral && agg < 0.5) agg *= 0.7;
+    let packChaos = /warzone|fracture|storm|void.?red|industrial|chaos|ash|tunnel|metal.?hall/.test(pack);
+    let packPastoral = /pastoral|forest|ocean|meadow|dream.?cloud|highway.?dusk|heal|snow|deer/.test(pack);
+    // Hard lock: treat pack as chaos for lighting/motion; NEVER pastoral bloom
+    if (hardLock || stickyAgg >= 0.55) {
+      packChaos = true;
+      packPastoral = false;
+      agg = Math.min(1, Math.max(stickyAgg, 0.62) + 0.08);
+    } else {
+      if (packChaos) agg = Math.min(1, Math.max(agg, 0.62) + 0.08);
+      if (packPastoral && agg < 0.5) agg *= 0.7;
+    }
 
     let mode = 'neutral';
-    if (spoken > 0.45 || dominant === 'spoken') mode = 'spoken';
-    else if ((scary > 0.45 && agg < 0.55) || dominant === 'scary') mode = 'scary';
-    else if (agg >= 0.55 || dominant === 'chaos' || chaosN > 0.55 || packChaos) mode = 'chaos';
+    if (hardLock || stickyAgg >= 0.55 || packChaos || dominant === 'chaos' || chaosN > 0.55) {
+      mode = 'chaos';
+    } else if (spoken > 0.45 || dominant === 'spoken') mode = 'spoken';
+    else if ((scary > 0.45 && stickyAgg < 0.55) || dominant === 'scary') mode = 'scary';
     else if (tense > 0.45 || dominant === 'tense') mode = 'tense';
     else if (peace > 0.45 || dominant === 'peace' || packPastoral) mode = 'peace';
 
+    this._hardLock = !!(hardLock || holdActive || mode === 'chaos');
+
+    // Motif memory: after chaos peak cool-down, briefly re-emphasize planted motif/cast rim
+    const now = nowHold;
+    if (mode === 'chaos' && stickyAgg >= 0.7) {
+      this._lastChaosPeakAt = now;
+    } else if (
+      this._lastChaosPeakAt > 0 &&
+      now - this._lastChaosPeakAt > 900 &&
+      now - this._lastChaosPeakAt < 2800 &&
+      this._motifMemoryUntil < now
+    ) {
+      this._motifMemoryUntil = now + 1100;
+    }
+
     return {
-      aggression: Math.max(0, Math.min(1, agg)),
+      aggression: Math.max(0, Math.min(1, Math.max(agg, stickyAgg))),
       mode,
       spoken,
-      peace,
+      peace: hardLock ? 0 : peace,
       scary,
       tense,
       dominant,
       chaos: chaosN,
       packChaos,
-      packPastoral
+      packPastoral: hardLock ? false : packPastoral,
+      hardLock: this._hardLock,
+      forbidPastoral,
+      aggressionLock,
+      ladder,
+      stickyAgg,
+      hardHoldUntil: this._hardHoldUntil || 0,
+      hardHoldActive: holdActive
     };
   }
 
@@ -477,6 +610,118 @@ export class Renderer {
     return true;
   }
 
+  /**
+   * Coherence-hard transition bridge: prefer morph/crossfade; refuse jump-cut soup
+   * unless Scene stamped an earned cut (breakdown/drop/chapter) or mode=cut + earnedCut.
+   * Mid-aggression: never let a soft pastoral destination "win" the morph visually —
+   * keep hardLock intensity sticky (overlays handle HARD lighting).
+   */
+  _resolveCoherentTransition(directive, audio, vm) {
+    const tr = directive?.transition;
+    if (!tr || !tr.from) return tr || null;
+    const sec = (directive?.sectionType || directive?.section || '').toString().toLowerCase();
+    const earned =
+      tr.earnedCut === true ||
+      tr.mode === 'earned_cut' ||
+      tr.chapterCut === true ||
+      /^(breakdown|drop|chapter)$/.test(sec) ||
+      (Array.isArray(directive?.events) && directive.events.some(
+        (e) => e === 'sky_tear' || e === 'collapse' || (e && e.type === 'chapter_cut')
+      ));
+    const toStr = (tr.to || '').toString().toLowerCase();
+    const fromStr = (tr.from || '').toString().toLowerCase();
+    // HARD_LOCK allowlist — anything else under pin is a soft/pale/copper win risk (Path F)
+    const HARD_IDS = /^(metal_hall|reality_fracture|apocalyptic_warzone|red_void|storm)$/;
+    const toSoft = !HARD_IDS.test(toStr) ||
+      /pastoral|forest|meadow|ocean|heal|snow|dream.?cloud|deer|white_void|empty_highway|linen|moss|spoken|highway.?dusk/.test(toStr);
+    const moment = audio?.moment || directive?.moment || {};
+    const hard = !!(
+      vm?.hardLock || vm?.hardHoldActive || vm?.mode === 'chaos' ||
+      vm?.forbidPastoral || vm?.aggressionLock ||
+      directive?.forbidPastoral || directive?.aggressionLock ||
+      directive?.hardOnly || directive?.hardLock || directive?.hardHud?.nuclearHard ||
+      moment.forbidPastoral || moment.aggressionLock ||
+      (moment.ladder || vm?.ladder || '') === 'aggressive' ||
+      (vm?.aggression || 0) >= 0.55 || (vm?.stickyAgg || 0) >= 0.55
+    );
+
+    // Refuse unearned hard cuts mid-phrase → force morph
+    let mode = tr.mode || 'morph';
+    if (mode === 'cut' && !earned) mode = 'morph';
+    // Mid-aggression: refuse soft destination "winning" via cut; morph + hard overlays
+    if (hard && toSoft && !earned) mode = 'morph';
+
+    const out = { ...tr, mode, forceMorph: mode === 'morph' };
+    // Path F: ANY non-hard destination under hardLock → Continuity skips soft `to` paint
+    if (hard && (toSoft || !HARD_IDS.test(toStr))) out.refuseSoftWin = true;
+    // Preserve world-family continuity hint for ContinuityEngine bridge
+    out.worldFamily = directive?.worldFamily || directive?.packFamily || null;
+    out.hardLock = hard;
+    return out;
+  }
+
+  /** Scene-stamped weaponId only (stickyWeaponId / cast / members / motifProps). */
+  _resolveWeaponId(directive, spec = null) {
+    const pick = (v) => {
+      if (v == null) return null;
+      const s = String(v).toLowerCase().replace(/-/g, '_');
+      return (!s || s === 'none') ? null : s;
+    };
+    const fromSpec = pick(spec?.weaponId);
+    if (fromSpec) return fromSpec;
+    const cast = directive?.cast;
+    if (cast && typeof cast === 'object' && !Array.isArray(cast)) {
+      const hub = pick(cast.weaponId) || pick(cast.stickyWeaponId);
+      if (hub) return hub;
+      if (Array.isArray(cast.members)) {
+        for (const m of cast.members) {
+          const w = pick(m?.weaponId);
+          if (w) return w;
+        }
+      }
+    }
+    const sticky = pick(directive?.stickyWeaponId) || pick(directive?.weaponId);
+    if (sticky) return sticky;
+    const props = directive?.motifProps;
+    if (Array.isArray(props)) {
+      for (const p of props) {
+        const w = pick(p?.weaponId);
+        if (w) return w;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * After chaos/aggression peak cool-down — briefly re-emphasize planted motif / sticky cast rim
+   * so the brain stitches continuity (MUSIC-BRIEF motif memory). Subtle, not new FX soup.
+   */
+  _drawMotifMemory(ctx, w, h, directive, state) {
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (now > this._motifMemoryUntil) return;
+    const remain = (this._motifMemoryUntil - now) / 1100;
+    const alpha = Math.max(0, Math.min(0.22, remain * 0.22));
+    if (alpha < 0.03) return;
+    const ax = this._figureAnchor?.x ?? w * 0.5;
+    const ay = this._figureAnchor?.y ?? h * 0.48;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Soft rim ring on sticky figure / motif locus — continuity stitch, not teleport FX
+    ctx.strokeStyle = 'rgba(255,230,200,0.85)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.ellipse(ax, ay, w * 0.07, h * 0.14, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    if (directive?.motif || directive?.stickyCharacterId) {
+      ctx.strokeStyle = 'rgba(255,200,140,0.55)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(ax, ay - h * 0.08, 10 + (1 - remain) * 8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   /** Shared clock for near-full whiteOut bumps (kick_punch / snare_flash ≥0.45). */
   _noteNearFullWhite(now) {
     this._lastWhiteFlash = now;
@@ -487,8 +732,40 @@ export class Renderer {
     const ri = rolesIntent || {};
     const g = this._pleasure || {};
     const vm = this._vibeMatch || { aggression: 0, mode: 'neutral' };
-    const agg = vm.aggression || 0;
-    const mode = vm.mode || 'neutral';
+    // LIVE NOW — prefer audio.moment / vibe.moment over smoothed roles for punch attack
+    const moment = audio?.moment || audio?.vibe?.moment || {};
+    const mKick = Number(moment.kick ?? roles.kick ?? 0);
+    const mSnare = Number(moment.snare ?? roles.snare ?? 0);
+    const mVocal = Number(moment.vocalish ?? roles.vocalish ?? roles.lead ?? 0);
+    const mHarsh = Number(moment.harsh ?? roles.harsh ?? 0);
+    const mDrop = Number(moment.drop ?? audio?.drop ?? 0);
+    const mAgg = Number(moment.aggression ?? vm.aggression ?? 0);
+    const mLock = !!(moment.aggressionLock || moment.forbidPastoral || vm.hardLock ||
+      vm.aggressionLock || vm.forbidPastoral || (vm.ladder || moment.ladder) === 'aggressive');
+    let agg = Math.max(vm.aggression || 0, mAgg);
+    let mode = mLock ? 'chaos' : (vm.mode || 'neutral');
+    if (mLock) agg = Math.max(agg, 0.72);
+    // Fast-attack NOW punches (before mul/decay) — sticky world, live punch
+    if (mKick > 0.4) {
+      this._kickFlash = Math.max(this._kickFlash, mKick * (mLock ? 1.25 : 1.05));
+      if (!getMotionComfort().muteGroundShake) {
+        this._groundShake = Math.max(this._groundShake, mKick * (mLock ? 22 : 16));
+      }
+    }
+    if (mSnare > 0.45) {
+      this._snareFlash = Math.max(this._snareFlash, mSnare * (mLock ? 1.15 : 0.95));
+      this._kickFlash = Math.max(this._kickFlash, mSnare * 0.55);
+    }
+    if (mHarsh > 0.5 || (mLock && mAgg >= 0.55)) {
+      this._glitch = Math.max(this._glitch, Math.min(0.95, mHarsh * 0.9 + (mLock ? 0.35 : 0)));
+    }
+    if (mVocal > 0.35) {
+      this._beam = Math.max(this._beam, Math.min(0.55, mVocal * 0.75));
+    }
+    if (mDrop > 0.5) {
+      this._kickFlash = Math.max(this._kickFlash, mDrop * 0.85);
+    }
+
     let kMul = g.kickMul != null ? g.kickMul : 1;
     let sMul = g.snareMul != null ? g.snareMul : 1;
     let spMul = g.sparkMul != null ? g.sparkMul : 1;
@@ -707,23 +984,37 @@ export class Renderer {
       this._vibeMatch
     );
 
-    // Camera: honor CameraSystem + directive.camera; A11y mutes shake/whip
-    // Vibe-match travel: earn push (through-screen) when energy/chaos; pastoral stays soft drift
+    // Camera: earned travel/spin punctuation only (coherence-hard). Soft/peace/spoken → drift.
+    // Push/orbit only on energy/chorus/drop peaks — NOT constant chaos. A11y mutes shake/whip.
     const _camC = getMotionComfort();
     let camMode = directive?.camera || null;
-    if (!camMode) {
-      const vm = this._vibeMatch || {};
-      const energy = Number(audio?.energy || 0);
-      const pack = (
-        directive?.preset || directive?.world || directive?.pack || directive?.worldId || ''
-      ).toString().toLowerCase();
-      const packChaos = /warzone|fracture|storm|void.?red|industrial|chaos|ash|tunnel/.test(pack);
-      const packPastoral = /pastoral|forest|ocean|meadow|dream.?cloud|highway.?dusk|heal|snow/.test(pack);
-      if (vm.mode === 'spoken' || vm.mode === 'peace' || packPastoral) camMode = 'drift';
-      else if (vm.mode === 'scary') camMode = 'drift';
-      else if ((vm.mode === 'chaos' || packChaos || (vm.aggression || 0) >= 0.55) && energy > 0.42) camMode = 'push';
-      else if (vm.mode === 'tense' || energy > 0.48) camMode = 'push';
-      else camMode = 'drift';
+    const vmCam = this._vibeMatch || {};
+    const energyCam = Number(audio?.energy || 0);
+    const dropCam = Number(audio?.drop || 0);
+    const secCam = (directive?.sectionType || directive?.section || '').toString().toLowerCase();
+    const chorusPeak = /chorus|drop|breakdown/.test(secCam) || dropCam > 0.45;
+    const hardCam = !!(vmCam.hardLock || vmCam.hardHoldActive || vmCam.mode === 'chaos' || (vmCam.aggression || 0) >= 0.55 || (vmCam.stickyAgg || 0) >= 0.55);
+    if (_camC.reduceMotion) {
+      camMode = 'drift';
+    } else if (!camMode) {
+      if (vmCam.mode === 'spoken' || vmCam.mode === 'peace' || (vmCam.packPastoral && !hardCam)) {
+        camMode = 'drift'; // slow drift only
+      } else if (vmCam.mode === 'scary') {
+        camMode = 'drift';
+      } else if (hardCam && (chorusPeak || energyCam > 0.55)) {
+        camMode = 'push'; // earned peak punctuation
+      } else if (vmCam.mode === 'tense' && (chorusPeak || energyCam > 0.58)) {
+        camMode = 'push';
+      } else if (hardCam && energyCam > 0.42) {
+        camMode = 'push';
+      } else {
+        camMode = 'drift';
+      }
+    } else if ((vmCam.mode === 'spoken' || vmCam.mode === 'peace') && !hardCam) {
+      // Soft song: Scene-stamped orbit/spin → demote to drift (punctuation only when hard)
+      if (camMode === 'orbit' || camMode === 'spin' || camMode === 'whip') camMode = 'drift';
+    } else if (!chorusPeak && !hardCam && energyCam < 0.5 && (camMode === 'orbit' || camMode === 'spin')) {
+      camMode = 'drift'; // refuse constant spin
     }
     if (_camC.muteCameraShakeWhip && (camMode === 'shake' || camMode === 'whip' || camMode === 'punch')) {
       camMode = 'drift';
@@ -772,10 +1063,15 @@ export class Renderer {
       scale: directive?.scale,
       instruments: roles,
       roles,
-      quality: this.quality
+      quality: this.quality,
+      // HOLD-0321: Worlds hard flags → presets fauna/soft-strip
+      forbidPastoral: !!(directive?.forbidPastoral || directive?.hardOnly || this._hardLock),
+      hardLock: !!(directive?.hardLock || directive?.hardOnly || this._hardLock),
+      hardOnly: !!directive?.hardOnly
     };
 
-    this.continuity.draw(ctx, w, h, state, directive?.transition);
+    const coherentTr = this._resolveCoherentTransition(directive, audio, this._vibeMatch);
+    this.continuity.draw(ctx, w, h, state, coherentTr);
 
     // Through-screen scenic travel (parallax/drift/sweep) — not a static postcard
     this._drawScenicTravel(ctx, w, h, state, directive);
@@ -887,6 +1183,9 @@ export class Renderer {
       this._drawMotif(ctx, w, h, directive.motif, directive.motifAction, state, directive);
     }
 
+    // Motif memory after chaos cool-down (subtle rim stitch)
+    this._drawMotifMemory(ctx, w, h, directive, state);
+
     ctx.restore();
 
     // Bass vignette weight (screen space)
@@ -940,6 +1239,20 @@ export class Renderer {
       ctx.fillText(directive.theme.slice(0, 60), w / 2, h * 0.18);
       ctx.restore();
     }
+
+    // HOLD-0338 DEBUG HUD — call ONLY module drawDebugHudImpl (no this._drawDebugHud TypeError)
+    try {
+      drawDebugHudImpl(ctx, w, h, directive, audio);
+    } catch (_) { /* never break render */ }
+  }
+
+
+  /**
+   * HOLD-0330: on-canvas proof HUD — delegates to module impl (prototype always present).
+   * Default ON; ?debug=0 off; ?debug=1 forces on.
+   */
+  _drawDebugHud(ctx, w, h, directive, audio) {
+    drawDebugHudImpl(ctx, w, h, directive, audio);
   }
 
   _drawMotif(ctx, w, h, motif, action, state, directive = null) {
@@ -1101,10 +1414,53 @@ export class Renderer {
       (spec.style === 'neon' || spec.style === 'dream') ? spec.style :
       (sceneCast?.style === 'neon' || sceneCast?.style === 'dream') ? sceneCast.style : null;
     const readableCast = !!(spec.readableCast || sceneCast?.readableCast);
-    const lookSpec = requestedStyle
+    const vmLook = this._vibeMatch || {};
+    // Live directive/moment — even if vibeMatch lag (Path F / cohere2 verify)
+    const momentLook = state?.audio?.moment || directive?.moment || {};
+    const hardLook = !!(
+      vmLook.hardLock || vmLook.hardHoldActive || vmLook.mode === 'chaos' ||
+      vmLook.forbidPastoral || vmLook.aggressionLock ||
+      directive?.forbidPastoral || directive?.aggressionLock ||
+      momentLook.forbidPastoral || momentLook.aggressionLock ||
+      (momentLook.ladder || vmLook.ladder || '') === 'aggressive' ||
+      (vmLook.aggression || 0) >= 0.55 || (vmLook.stickyAgg || 0) >= 0.55
+    );
+    // Mid-aggression / hard hold: NEVER pale soft / green rim / pastoral (QA HOLD B2/B3)
+    let lookSpecBase = requestedStyle
       ? { ...spec, style: requestedStyle }
-      : (readableCast ? { ...spec, style: spec.style || 'neon', readableCast: true } : spec);
-    const look = resolveCastLook(lookSpec, vibe);
+      : (readableCast ? { ...spec, style: spec.style || 'neon', readableCast: true } : { ...spec });
+    if (hardLook) {
+      const softOutfit = /linen_dawn|aisle_linen|pastoral|moss|meadow|forest|pale_void|room_clothes|water_gloss|industrial_hazard|highway_dust/.test(
+        String(lookSpecBase.outfitId || lookSpecBase.outfit || lookSpecBase.archetype || '').toLowerCase()
+      );
+      const softArch = /pastoral_walker|nature_fauna|sacred_solitary|void_presence|spoken_intimate|cosmic_dissolve/.test(
+        String(lookSpecBase.archetype || '').toLowerCase()
+      );
+      if (softOutfit || softArch) {
+        lookSpecBase = {
+          ...lookSpecBase,
+          archetype: isLead ? 'fg_performer' : 'chaos_fracture',
+          outfitId: isLead ? 'ember_coat' : 'fracture_rag',
+          outfit: isLead ? 'ember_coat' : 'fracture_rag',
+          style: 'silhouette'
+        };
+      } else {
+        // Neon glow amplifies any residual green — force silhouette under hard hold
+        lookSpecBase = { ...lookSpecBase, style: 'silhouette' };
+      }
+    }
+    const look = resolveCastLook(lookSpecBase, hardLook ? 'chaos' : vibe);
+    if (hardLook && look.palette) {
+      // Warzone/fracture ash-ember-red ONLY — kill green + pale soft + pastoral copper
+      look.palette = {
+        fill: 'rgba(6,5,6,0.97)',
+        rim: 'rgba(255,120,60,0.95)',
+        accent: 'rgba(220,40,30,0.85)',
+        shadow: 'rgba(4,3,4,0.75)'
+      };
+      look.style = 'silhouette';
+      if (look.fauna) look.fauna = false;
+    }
     const spread = look.formation ? 0.36 : 0.28;
     const i = idx % Math.max(1, count);
     // Center-frame single dancer / fg lead; formation keeps lead near center-readable
@@ -1153,6 +1509,25 @@ export class Renderer {
       directive?.world?.pack ||
       state?.worldPack ||
       '';
+    // Sticky cast identity + hardLock → phone-readable vocalist (QA HOLD B2/B3 blob fix)
+    const stickyId = spec.characterId || directive?.stickyCharacterId || sceneCast?.characterId || null;
+    const vmCast = this._vibeMatch || {};
+    const hardCast = !!(vmCast.hardLock || vmCast.hardHoldActive || vmCast.mode === 'chaos' || (vmCast.aggression || 0) >= 0.55 || (vmCast.stickyAgg || 0) >= 0.55);
+    let roleIdDraw = spec.roleId || look.roleId || null;
+    // Lead FG / sticky performer → force vocalist-readable silhouette when Characters on
+    if (!roleIdDraw && isLead && (this.showCharacters || !!directive?.cast)) {
+      if (castRole && /vocal|performer|singer|lead/.test(String(castRole).toLowerCase())) {
+        roleIdDraw = /performer/.test(String(castRole).toLowerCase()) ? 'performer' : 'vocalish';
+      } else if (
+        stickyId ||
+        look.archetype === 'fg_performer' ||
+        /foreground|fg/.test(placement) ||
+        hardCast
+      ) {
+        // Lead FG present → coat/mic wedge must read (not pastoral blob)
+        roleIdDraw = 'vocalish';
+      }
+    }
     const drawn = drawCastFigure(ctx, {
       x: fx,
       baseY,
@@ -1161,16 +1536,16 @@ export class Renderer {
       t,
       i,
       look,
-      opacity,
+      opacity: hardCast ? Math.max(opacity, 0.95) : opacity,
       kind: spec.kind,
       archetype: look.archetype || spec.archetype,
       roles,
-      roleId: spec.roleId || look.roleId || null,
+      roleId: roleIdDraw,
       rolePulse: spec.rolePulse,
       danceIntent,
-      speechLike,
+      speechLike: hardCast ? false : speechLike,
       holdSilent,
-      vibe,
+      vibe: hardCast ? 'chaos' : vibe,
       section,
       genreFamily,
       energy,
@@ -1179,11 +1554,16 @@ export class Renderer {
       isLead,
       castRole,
       directiveRole: castRole,
-      packId
+      packId: hardCast ? (packId || 'warzone') : packId,
+      characterId: stickyId,
+      stickyCharacterId: stickyId,
+      hardLock: hardCast,
+      aggression: vmCast.aggression || 0,
+      charactersOn: !!(this.showCharacters || !!directive?.cast)
     });
 
     // Role-agent pulse FX + weapon story props (stack on cast; never replace)
-    let roleId = spec.roleId || look.roleId || null;
+    let roleId = roleIdDraw || spec.roleId || look.roleId || null;
     if (!roleId && castRole && /vocal|performer|singer|lead/.test(String(castRole).toLowerCase())) {
       roleId = /performer/.test(String(castRole).toLowerCase()) ? 'performer' : 'vocalish';
     }
@@ -1199,19 +1579,23 @@ export class Renderer {
         t
       });
     }
-    const weaponId = spec.weaponId || directive?.weaponId || null;
+    // Scene-stamped weaponId only (stickyWeaponId / cast / members / motifProps)
+    const weaponId = this._resolveWeaponId(directive, spec);
     if (weaponId && drawn) {
-      // Scene-stamped weaponId only — Visual never invents unlocks
+      const vmW = this._vibeMatch || {};
+      const hardW = !!(vmW.hardLock || vmW.hardHoldActive || vmW.mode === 'chaos' || (vmW.aggression || 0) >= 0.55 || (vmW.stickyAgg || 0) >= 0.55);
       drawWeaponProp(ctx, drawn, {
         weaponId,
-        style: look.style,
+        style: hardW ? (look.style === 'dream' ? 'silhouette' : look.style) : look.style,
         look,
-        opacity,
+        opacity: Math.max(opacity, hardW ? 0.94 : opacity),
         events: directive?.events || state?.events,
         t: state?.t ?? t,
         vibe,
-        packId,
-        worldPack: packId,
+        packId: hardW ? (packId || 'warzone') : packId,
+        worldPack: hardW ? (packId || 'warzone') : packId,
+        hardLock: hardW,
+        aggression: vmW.aggression || 0,
         lyricIrony: !!(spec.lyricIrony || look.lyricIrony || directive?.lyricIrony || spec.irony || look.irony)
       });
     }
@@ -1352,27 +1736,52 @@ export class Renderer {
     const energy = Number(audio.energy || 0);
     const bass = Number(audio.bass || audio.roles?.bass || 0);
     const kick = Number(audio.roles?.kick || 0);
+    const drop = Number(audio.drop || 0);
     const t = state?.t || 0;
     const mode = vm.mode || 'neutral';
     const agg = vm.aggression || 0;
+    const hard = !!(vm.hardLock || vm.hardHoldActive || mode === 'chaos' || agg >= 0.55 || (vm.stickyAgg || 0) >= 0.55
+      || directive?.hardOnly || directive?.hardLock || directive?.hardHud?.hardOnly || directive?.hardHud?.nuclearHard
+      || vm.forbidPastoral || vm.aggressionLock);
     const pack = (
-      directive?.preset || directive?.world || directive?.pack || directive?.worldId || ''
+      directive?.preset || directive?.world || directive?.pack || directive?.worldId ||
+      directive?.packFamily || ''
     ).toString().toLowerCase();
-    const packChaos = /warzone|fracture|storm|void.?red|industrial|chaos|ash|tunnel/.test(pack);
-    const packPastoral = /pastoral|forest|ocean|meadow|dream.?cloud|highway.?dusk|heal|snow/.test(pack);
+    const packChaos = hard || /warzone|fracture|storm|void.?red|industrial|chaos|ash|tunnel|metal.?hall|red.?void/.test(pack);
+    const packPastoral = !hard && /pastoral|forest|ocean|meadow|dream.?cloud|highway.?dusk|heal|snow/.test(pack);
+    const sec = (directive?.sectionType || directive?.section || '').toString().toLowerCase();
+    const peak = /chorus|drop|breakdown/.test(sec) || drop > 0.45 || (kick > 0.55 && energy > 0.5);
 
-    let speed = 0.32 + energy * 0.95 + agg * 0.35;
-    let alpha = 0.055 + energy * 0.07;
-    if (mode === 'spoken') { speed *= 0.22; alpha *= 0.35; }
-    else if (mode === 'peace' || packPastoral) { speed *= 0.42; alpha = Math.max(0.05, alpha * 0.85); }
-    else if (mode === 'scary') { speed *= 0.28; alpha *= 0.65; }
-    else if (mode === 'tense') { speed *= 0.9; alpha *= 1.05; }
-    else if (mode === 'chaos' || packChaos || agg >= 0.55) {
-      speed *= 1.4 + (packChaos ? 0.2 : 0);
-      alpha *= 1.25;
+    // Earned travel only: soft/peace/spoken → slow drift; sweep/punch on peaks
+    let speed = 0.18 + energy * 0.55;
+    let alpha = 0.035 + energy * 0.045;
+    let allowSweep = false;
+    let allowPunch = false;
+    if (mode === 'spoken' || mode === 'peace' || packPastoral) {
+      speed *= 0.28; // slow drift only
+      alpha *= 0.4;
+      allowSweep = false;
+      allowPunch = false;
+    } else if (mode === 'scary') {
+      speed *= 0.32;
+      alpha *= 0.55;
+    } else if (mode === 'tense') {
+      speed *= 0.7;
+      alpha *= 0.85;
+      allowSweep = peak;
+      allowPunch = peak && kick > 0.4;
+    } else if (hard || packChaos || agg >= 0.55) {
+      // Punctuation on peaks — not constant chaos soup
+      speed *= peak ? (1.15 + agg * 0.35) : (0.55 + energy * 0.35);
+      alpha *= peak ? 1.15 : 0.7;
+      allowSweep = peak || energy > 0.58;
+      allowPunch = peak || (kick > 0.5 && agg >= 0.55);
+    } else {
+      allowSweep = peak;
+      allowPunch = peak && kick > 0.45;
     }
-    if (comfort.lessFlash) { speed *= 0.5; alpha *= 0.55; }
-    if (alpha < 0.03 && speed < 0.2) return;
+    if (comfort.lessFlash) { speed *= 0.5; alpha *= 0.55; allowSweep = false; }
+    if (alpha < 0.025 && speed < 0.15) return;
 
     ctx.save();
     // Far layer — slow horizontal haze bands (parallax)
@@ -1398,29 +1807,34 @@ export class Renderer {
       ctx.fillRect(0, y, w, 10 + i * 3);
     }
 
-    // Mid layer — diagonal sweep / travel planes
-    const sweep = ((t * 40 * speed) % (w * 1.2)) - w * 0.3;
-    ctx.globalAlpha = Math.min(0.12, alpha);
-    ctx.beginPath();
-    ctx.moveTo(sweep, 0);
-    ctx.lineTo(sweep + w * 0.18, 0);
-    ctx.lineTo(sweep + w * 0.05, h);
-    ctx.lineTo(sweep - w * 0.12, h);
-    ctx.closePath();
-    if (mode === 'chaos' || packChaos) ctx.fillStyle = 'rgba(255,220,200,0.35)';
-    else if (mode === 'scary') ctx.fillStyle = 'rgba(40,60,90,0.4)';
-    else ctx.fillStyle = 'rgba(255,250,235,0.3)';
-    ctx.fill();
+    // Mid layer — diagonal sweep ONLY when earned (peak/high energy)
+    if (allowSweep) {
+      const sweep = ((t * 40 * speed) % (w * 1.2)) - w * 0.3;
+      ctx.globalAlpha = Math.min(0.12, alpha);
+      ctx.beginPath();
+      ctx.moveTo(sweep, 0);
+      ctx.lineTo(sweep + w * 0.18, 0);
+      ctx.lineTo(sweep + w * 0.05, h);
+      ctx.lineTo(sweep - w * 0.12, h);
+      ctx.closePath();
+      if (hard || mode === 'chaos' || packChaos) ctx.fillStyle = 'rgba(160,200,230,0.32)'; // cold steel, not warm peach
+      else if (mode === 'scary') ctx.fillStyle = 'rgba(40,60,90,0.4)';
+      else ctx.fillStyle = 'rgba(255,250,235,0.3)';
+      ctx.fill();
+    }
 
-    // Near layer — ground plane push with bass/kick (reads travel under feet)
+    // Near layer — ground push only when earned punch / hard peak
     const groundShift = Math.sin(t * (1.2 + speed)) * w * 0.02 * (0.4 + bass + kick);
-    const punch = Math.min(0.16, (kick * 0.1 + bass * 0.06) * (mode === 'chaos' || packChaos ? 1.35 : 1));
-    if (!comfort.muteGroundShake && (punch > 0.02 || Math.abs(groundShift) > 1)) {
+    const punch = allowPunch
+      ? Math.min(0.16, (kick * 0.1 + bass * 0.06) * (hard || packChaos ? 1.35 : 1))
+      : 0;
+    if (!comfort.muteGroundShake && allowPunch && (punch > 0.02 || Math.abs(groundShift) > 1)) {
       ctx.globalAlpha = Math.min(0.18, alpha + punch);
       const gg = ctx.createLinearGradient(0, h * 0.62, 0, h);
       gg.addColorStop(0, 'rgba(0,0,0,0)');
-      if (mode === 'chaos' || packChaos) {
-        gg.addColorStop(1, `rgba(255,160,80,${0.25 + punch})`);
+      if (hard || mode === 'chaos' || packChaos) {
+        // HOLD-0330: ash / crimson / steel — NEVER warm orange punch under hardLock
+        gg.addColorStop(1, `rgba(140,40,30,${0.28 + punch})`);
       } else if (mode === 'peace' || packPastoral) {
         gg.addColorStop(1, `rgba(180,210,255,${0.18 + punch * 0.5})`);
       } else {
@@ -1441,13 +1855,65 @@ export class Renderer {
     const audio = state?.audio || {};
     const vm = this._vibeMatch || this._deriveVibeAggression(audio, directive, state?.emotion);
     const vibe = (directive?.vibe || directive?.mood || vm.dominant || '').toString().toLowerCase();
+    const agg = vm.aggression || 0;
+    const hard = !!(vm.hardLock || vm.hardHoldActive || vm.forbidPastoral || vm.aggressionLock ||
+      vm.ladder === 'aggressive' || vm.mode === 'chaos' || agg >= 0.55 ||
+      (vm.stickyAgg || 0) >= 0.55 || (vm.chaos || 0) > 0.55 ||
+      directive?.hardOnly || directive?.hardLock || directive?.hardHud?.nuclearHard ||
+      directive?.hardHud?.hardOnly);
     const speechLike = !!(
       directive?.speechLike ||
       directive?.rolesIntent?.speechLike ||
       vm.mode === 'spoken'
     );
-    const agg = vm.aggression || 0;
     const t = state?.t || 0;
+
+    // HARD HOLD: denser fracture even if pack briefly soft — NEVER peace bloom / green wash (QA B2/B3)
+    if (hard) {
+      const aHold = Math.max(agg, vm.stickyAgg || 0, 0.72);
+      this._glitch = Math.max(this._glitch, 0.42 + aHold * 0.5);
+      this._kickFlash = Math.max(this._kickFlash, 0.32 + aHold * 0.38);
+      this._fog *= 0.22;
+      this._sparkBurst *= 0.18; // mute candy
+      ctx.save();
+      // Denser fracture scanlines under hard hold
+      const bars = Math.floor(10 + aHold * 16);
+      ctx.globalAlpha = Math.min(0.55, 0.22 + aHold * 0.32);
+      for (let i = 0; i < bars; i++) {
+        const y = (t * (60 + aHold * 80) + i * 47) % h;
+        ctx.fillStyle = (i % 2)
+          ? `rgba(160,200,230,${0.1 + aHold * 0.14})` // cold steel flash, not warm peach
+          : `rgba(0,0,0,${0.26 + aHold * 0.22})`;
+        ctx.fillRect(0, y, w, 1 + (i % 3) + (aHold > 0.6 ? 2 : 0));
+      }
+      // Storm contrast edges (ash-ember-red ONLY — NOT green / pastoral)
+      ctx.globalAlpha = Math.min(0.28, 0.14 + aHold * 0.26);
+      const edge = ctx.createLinearGradient(0, 0, w, 0);
+      edge.addColorStop(0, 'rgba(180,40,20,1)');
+      edge.addColorStop(0.5, 'rgba(0,0,0,0)');
+      edge.addColorStop(1, 'rgba(50,18,30,1)');
+      ctx.fillStyle = edge;
+      ctx.fillRect(0, 0, w, h);
+      // Ash dust denser
+      ctx.globalAlpha = Math.min(0.42, 0.16 + aHold * 0.28);
+      ctx.fillStyle = 'rgba(200,170,150,0.9)';
+      const ash = Math.floor(28 + aHold * 36);
+      for (let i = 0; i < ash; i++) {
+        ctx.fillRect(
+          (Math.sin(t * 3 + i * 2.1) * 0.5 + 0.5) * w,
+          (Math.cos(t * 2.2 + i * 1.7) * 0.5 + 0.5) * h,
+          1 + (i % 3),
+          1 + (i % 2)
+        );
+      }
+      // Side vignette pressure
+      ctx.globalAlpha = Math.min(0.34, 0.14 + aHold * 0.22);
+      ctx.fillStyle = 'rgba(0,0,0,1)';
+      ctx.fillRect(0, 0, w * 0.08, h);
+      ctx.fillRect(w * 0.92, 0, w * 0.08, h);
+      ctx.restore();
+      return;
+    }
 
     if (speechLike || vm.mode === 'spoken') {
       // Intimate room — lyric-as-world; throttle flash/glitch/shake
@@ -1550,3 +2016,6 @@ export class Renderer {
     ctx.restore();
   }
 }
+
+// HOLD-0330 belt-and-suspenders — prototype always has HUD even if class parse races
+Renderer.prototype._drawDebugHud = drawDebugHudImpl;

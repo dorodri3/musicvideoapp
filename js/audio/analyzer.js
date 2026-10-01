@@ -43,6 +43,14 @@ export class AudioAnalyzer {
       aggression: 0.15, arousal: 0.4, warm: 0.2
     };
     this._harshSustain = 0; // bleach guard — brief spikes OK, sustained harsh soft-caps
+    // Ladder hysteresis — Scene needs stable rung (CEO: barely coherent)
+    this._ladderSticky = 'peaceful';
+    this._ladderCandidate = null;
+    this._ladderCandidateSince = 0;
+    this._ladderChangedAt = 0;
+    this._aggressionPinUntil = 0; // ms — pin aggressive ≥20s once earned (QA-0306)
+    this._aggressionPeak = 0;
+    this._aggressionHeldFloor = 0; // frozen floor while lock — never drops
     this._textureSmooth = {
       swell: 0, swing: 0, harshWall: 0, ambient: 0,
       pocketKick: 0, sparseAcoustic: 0, fourOnFloor: 0
@@ -97,8 +105,27 @@ export class AudioAnalyzer {
         speechLike: 0, spoken: 0, intimateSpeech: 0, nonGroove: 0,
         aggression: 0.15, arousal: 0.4, warm: 0.2,
         ladder: 'peaceful',
+        forbidPastoral: false,
+        aggressionLock: false,
+        martial: false,
+        orchestralMartial: false,
+        pinArmed: false,
+        softClear: false,
+        hardOnly: false,
         dominant: 'peace'
       },
+      moment: {
+        kick: 0, snare: 0, vocalish: 0, hats: 0, harsh: 0,
+        drop: 0, build: 0, beat: false, onset: 0, onsetFast: 0, energy: 0,
+        aggression: 0, aggressionLock: false, forbidPastoral: false,
+        martial: false, orchestralMartial: false, pinArmed: false,
+        softClear: false, hardOnly: false, ladder: 'peaceful'
+      },
+      pinArmed: false,
+      hardOnly: false,
+      martial: false,
+      orchestralMartial: false,
+      softClear: false,
       texture: {
         swell: 0, swing: 0, harshWall: 0, ambient: 0,
         pocketKick: 0, sparseAcoustic: 0, fourOnFloor: 0
@@ -307,12 +334,21 @@ export class AudioAnalyzer {
       roles.lead *= 0.55;
     }
 
-    // Onset density window (~2s) for vibe chaos vs peaceful
+    // Onset density: long (~2s) for peace/chaos bed; fast (~0.8s) for martial NOW
     if (onset > 0.4) this._onsetTimes.push(now);
     while (this._onsetTimes.length && now - this._onsetTimes[0] > 2000) {
       this._onsetTimes.shift();
     }
     const onsetDensity = Math.min(1, this._onsetTimes.length / 10);
+    // Fast window — don't wait seconds to hear a drop/chorus hit
+    let onsetFast = 0;
+    {
+      let n = 0;
+      for (const t0 of this._onsetTimes) {
+        if (now - t0 <= 800) n++;
+      }
+      onsetFast = Math.min(1, n / 5);
+    }
 
     this._rmsVarHist.push(rms);
     if (this._rmsVarHist.length > 45) this._rmsVarHist.shift();
@@ -375,7 +411,7 @@ export class AudioAnalyzer {
 
     // Pleasure lean by genreFamily (GENRE-MAP-PLEASURE) — before spoken clamps
     dropOut = this._applyPleasureLean(roles, {
-      family: genreFamily, texture, vibe, silence, drop: dropOut
+      family: genreFamily, texture, vibe, silence, drop: dropOut, energy
     });
 
     // Spoken / non-groove LAST: never invent pocket that kills immersion
@@ -393,11 +429,51 @@ export class AudioAnalyzer {
       vibe.chaos = vibe.chaotic;
       vibe.warm *= 0.5;
       vibe.dominant = 'spoken';
-      vibe.ladder = 'spoken';
+      // ladder via hysteresis below — don't thrash to spoken every frame
     }
 
     // Genre-family aggression deepen (rock/noise up; ambient/spoken soft)
     this._finalizeAggression(vibe, roles, genreFamily, texture);
+
+    // HOLD QA-20261001-0255: pin aggressive on harsh+energy storms (≥12–15s)
+    // so Scene/Worlds cannot fall back to pastoral/warm mid-show.
+    this._applyAggressionPin(vibe, roles, {
+      energy, silence, genreFamily, texture, now, onsetDensity, onsetFast, flux,
+      drop: dropOut, build
+    });
+
+    // Stable ladder for Scene (hysteresis / longer windows)
+    const instantLadder = this._ladderFromVibe(vibe);
+    vibe.ladder = this._smoothLadder(instantLadder, vibe, now);
+
+    // Live NOW snapshot — Scene drives off this without vibe lag
+    const hardOnly = !!(vibe.hardOnly || vibe.aggressionLock || vibe.forbidPastoral
+      || vibe.martial || vibe.orchestralMartial);
+    vibe.hardOnly = hardOnly;
+    const moment = {
+      kick: roles.kick || 0,
+      snare: roles.snare || 0,
+      vocalish: roles.vocalish || roles.lead || 0,
+      hats: roles.hats || 0,
+      harsh: roles.harsh || 0,
+      drop: dropOut || 0,
+      build: build || 0,
+      beat: !!beat,
+      onset: onset || 0,
+      onsetFast,
+      energy,
+      aggression: vibe.aggression || 0,
+      aggressionLock: !!vibe.aggressionLock,
+      forbidPastoral: !!vibe.forbidPastoral,
+      martial: !!vibe.martial,
+      orchestralMartial: !!vibe.orchestralMartial,
+      pinArmed: !!vibe.pinArmed,
+      softClear: !!vibe.softClear,
+      hardOnly,
+      ladder: vibe.ladder,
+      genreFamily
+    };
+    vibe.moment = moment;
 
     this.frame = {
       rms, peak, centroid, flux,
@@ -410,6 +486,13 @@ export class AudioAnalyzer {
       roles,
       instruments: roles,
       vibe,
+      moment, // alias at frame root for Scene
+      // QA-0321 proof — also at frame root so HUD cannot miss vibe→moment drop
+      pinArmed: !!vibe.pinArmed,
+      hardOnly,
+      martial: !!vibe.martial,
+      orchestralMartial: !!vibe.orchestralMartial,
+      softClear: !!vibe.softClear,
       texture,
       genreHint,
       genreFamily,
@@ -422,10 +505,11 @@ export class AudioAnalyzer {
    * Shape roles toward fan pleasure by genreFamily.
    * Mutates roles; returns adjusted drop. Spoken clamps applied by caller after.
    */
-  _applyPleasureLean(roles, { family, texture, vibe, silence, drop }) {
+  _applyPleasureLean(roles, { family, texture, vibe, silence, drop, energy = 0 }) {
     let dropOut = drop;
     const fam = family || 'unknown';
     const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    const energyN = energy || 0;
 
     switch (fam) {
       case 'hiphop':
@@ -441,14 +525,20 @@ export class AudioAnalyzer {
         break;
 
       case 'electronic':
-        if ((texture.ambient || 0) > 0.4 && (texture.fourOnFloor || 0) < 0.35) {
-          // Ambient sibling — immersion, no forced drop
+        if ((texture.ambient || 0) > 0.35 && (texture.fourOnFloor || 0) < 0.4) {
+          // Ambient / chillhop sibling (Night Owl) — immersion, crush false kick meter
           roles.pads = clamp01(Math.max(roles.pads, 0.4) * 1.15);
-          roles.kick *= 0.45;
+          roles.kick *= energyN < 0.36 ? 0.22 : 0.4;
+          roles.kick = Math.min(roles.kick, energyN < 0.36 ? 0.16 : 0.26);
           roles.snare *= 0.5;
           roles.harsh *= 0.4;
           dropOut *= 0.25;
           if (silence) roles.pads = clamp01(roles.pads + 0.12);
+        } else if (energyN < 0.34 && (texture.fourOnFloor || 0) < 0.45) {
+          // Soft electronic without strong ambient tag yet — still don't invent martial kick
+          roles.kick = Math.min(roles.kick * 0.55, 0.22);
+          roles.pads = clamp01(Math.max(roles.pads, 0.28));
+          dropOut *= 0.4;
         } else {
           // EDM: four-on-floor hypnosis + one short drop
           roles.kick = clamp01(roles.kick * 1.15 + 0.04);
@@ -461,10 +551,21 @@ export class AudioAnalyzer {
 
       case 'classical':
       case 'gospel':
+      case 'soundtrack':
+        // Orchestral / cinematic — pads bed, but keep timpani/brass punch when hot
         roles.pads = clamp01(Math.max(roles.pads, 0.35) * 1.2);
-        roles.kick *= 0.55;
         roles.harsh *= 0.25;
-        dropOut *= 0.35;
+        {
+          const hotPunch = (roles.kick || 0) > 0.22 || (roles.bass || 0) > 0.32
+            || (texture.swell || 0) > 0.3;
+          if (hotPunch) {
+            roles.kick = clamp01(roles.kick * 1.05);
+            dropOut = clamp01(Math.max(dropOut, roles.kick * 0.55));
+          } else {
+            roles.kick *= 0.55;
+            dropOut *= 0.35;
+          }
+        }
         if (silence) roles.pads = clamp01(roles.pads + 0.1);
         break;
 
@@ -522,10 +623,19 @@ export class AudioAnalyzer {
         break;
     }
 
-    // Never invent a kick pocket that kills ambient immersion (even if mis-tagged)
-    if ((texture.ambient || 0) > 0.5 && fam !== 'rock' && fam !== 'noise') {
-      roles.kick = Math.min(roles.kick, 0.28);
-      dropOut = Math.min(dropOut, 0.2);
+    // Cap ambient kick when NOT cinematicBed (HOLD QA-0338 Night Owl).
+    // Clash keeps punch: soundtrack/classical/gospel/jazz OR hot swell/ambient+energy.
+    const cinematicBed = fam === 'classical' || fam === 'gospel' || fam === 'jazz'
+      || fam === 'soundtrack'
+      || ((texture.swell || 0) > 0.32 && energyN > 0.4)
+      || ((texture.ambient || 0) > 0.38 && energyN > 0.42 && (roles.harsh || 0) < 0.28);
+    if (!cinematicBed && fam !== 'rock' && fam !== 'noise') {
+      // HOLD-0338: crush false kick on ambient/soft energy (Night Owl kickRaw→1)
+      if ((texture.ambient || 0) > 0.35 || energyN < 0.42 || (roles.harsh || 0) < 0.18) {
+        const cap = energyN < 0.42 ? 0.18 : 0.26;
+        roles.kick = Math.min(roles.kick, cap);
+        dropOut = Math.min(dropOut, energyN < 0.42 ? 0.15 : 0.22);
+      }
     }
     return dropOut;
   }
@@ -690,22 +800,24 @@ export class AudioAnalyzer {
       - (tex.ambient || 0) * 0.2;
     warm = clamp(warm);
 
-    // Smooth for director/visual stability (aggression a bit snappier for rock hits)
+    // CEO realtime: fast escalate into aggression / slow release once hot
     const s = this._vibeSmooth;
-    const lerp = (key, target, a = 0.22) => {
-      s[key] = (s[key] ?? target) * (1 - a) + target * a;
+    const lerpAR = (key, target, attack, release) => {
+      const cur = s[key] ?? target;
+      const a = target > cur ? attack : release;
+      s[key] = cur * (1 - a) + target * a;
       return s[key];
     };
     const out = {
-      peaceful: lerp('peaceful', peaceful),
-      chaotic: lerp('chaotic', chaotic, 0.28),
-      scary: lerp('scary', scary),
-      tense: lerp('tense', tense),
-      speechLike: lerp('speechLike', speechLike),
-      nonGroove: lerp('nonGroove', nonGroove),
-      aggression: lerp('aggression', aggression, 0.3),
-      arousal: lerp('arousal', arousal, 0.25),
-      warm: lerp('warm', warm, 0.22)
+      peaceful: lerpAR('peaceful', peaceful, 0.1, 0.18),
+      chaotic: lerpAR('chaotic', chaotic, 0.55, 0.1),      // fast up
+      scary: lerpAR('scary', scary, 0.2, 0.1),
+      tense: lerpAR('tense', tense, 0.4, 0.12),             // catch pre-chorus NOW
+      speechLike: lerpAR('speechLike', speechLike, 0.15, 0.12),
+      nonGroove: lerpAR('nonGroove', nonGroove, 0.15, 0.12),
+      aggression: lerpAR('aggression', aggression, 0.65, 0.08), // snap martial
+      arousal: lerpAR('arousal', arousal, 0.45, 0.1),
+      warm: lerpAR('warm', warm, 0.12, 0.2)                 // slow into warm — no false warm spike
     };
     // VIBE-TAXONOMY-20260924-2125 aliases
     out.calm = out.peaceful;
@@ -739,30 +851,342 @@ export class AudioAnalyzer {
       dominant = 'warm';
     }
     out.dominant = dominant;
-    out.ladder = this._ladderFromVibe(out);
+    // ladder set once via _smoothLadder at end of update (hysteresis)
+    out.ladder = this._ladderSticky || 'peaceful';
     return out;
   }
 
   /**
-   * MUSIC-BRIEF vibe-match ladder:
-   * peaceful → warm → tense → aggressive/chaos (+ scary sibling) | spoken
+   * Instant ladder guess from vibe (no stickiness).
+   * MUSIC-BRIEF: peaceful → warm → tense → aggressive (+ scary) | spoken
    */
   _ladderFromVibe(v) {
-    if ((v.spoken || 0) > 0.48 && (v.aggression || 0) < 0.5) return 'spoken';
-    if ((v.aggression || 0) > 0.55 || ((v.chaos || 0) > 0.55 && (v.aggression || 0) > 0.4)) {
+    const scores = this._ladderScores(v);
+    let best = 'peaceful';
+    let bestScore = -1;
+    for (const [k, s] of Object.entries(scores)) {
+      if (s > bestScore) { bestScore = s; best = k; }
+    }
+    return best;
+  }
+
+  _ladderScores(v) {
+    const spoken = v.spoken || v.speechLike || 0;
+    const agg = v.aggression || 0;
+    const chaos = v.chaos || v.chaotic || 0;
+    const scary = v.scary || 0;
+    const tense = v.tense || 0;
+    const warm = v.warm || 0;
+    const peace = v.peace || v.peaceful || 0;
+    return {
+      spoken: spoken > 0.42 && agg < 0.52 ? spoken : spoken * 0.35,
+      aggressive: Math.max(agg, chaos * 0.9) * (agg > 0.35 ? 1 : 0.55),
+      scary: scary >= agg && agg < 0.52 ? scary : scary * 0.4,
+      tense: tense > 0.4 && agg < 0.52 ? tense : tense * 0.45,
+      warm: warm > 0.32 && agg < 0.45 ? warm : warm * 0.4,
+      peaceful: peace * (1 - Math.max(agg, chaos) * 0.7)
+    };
+  }
+
+  /**
+   * Hysteresis / dwell so Scene gets a stable rung (CEO: barely coherent).
+   * Hold current rung ≥1.8s min; switch only if candidate wins for ≥1.2s
+   * with score margin, or a clear storm (aggressive) with stronger margin.
+   */
+  /**
+   * Pin aggressive ladder when martial/harsh+energy storm earned.
+   * HOLD QA-0306: ≥20s pin; while lock/forbidPastoral aggression NEVER drops;
+   * warm forced to 0 — no soft afterglow Scene can read as pale/copper pastoral.
+   */
+  _applyAggressionPin(vibe, roles, ctx) {
+    const clamp = (v) => Math.max(0, Math.min(1, v));
+    const now = ctx.now || performance.now();
+    const harsh = roles.harsh || 0;
+    const kick = roles.kick || 0;
+    const energy = ctx.energy || 0;
+    const dens = ctx.onsetDensity || 0;
+    const densFast = ctx.onsetFast != null ? ctx.onsetFast : dens;
+    const fluxN = Math.min(1, (ctx.flux || 0) * 0.35);
+    const dropN = ctx.drop || 0;
+    const buildN = ctx.build || 0;
+    const silence = !!ctx.silence;
+    const fam = ctx.genreFamily || 'unknown';
+    const tex = ctx.texture || {};
+    const spoken = (vibe.spoken || vibe.speechLike || 0) > 0.5 || fam === 'spoken';
+    const bassN = roles.bass || 0;
+    const swellN = tex.swell || 0;
+
+    // HOLD-0346: softClear MUST ignore sticky aggression (≥0.78 under pin) and densFast/kick.
+    // Chicken-egg was: lock → aggression floor → lowAgg false → softClear never → pin never clears.
+    const calmGenre = fam === 'electronic' || fam === 'spoken' || fam === 'folk' || fam === 'indie'
+      || fam === 'ambient' || fam === 'pop' || fam === 'rnb' || fam === 'unknown';
+    const softEnergy = energy < 0.42; // Night Owl HUD ~0.327–0.372
+    const softHarsh = harsh < 0.25;
+    const orchestralFam = fam === 'classical' || fam === 'gospel' || fam === 'jazz'
+      || fam === 'soundtrack';
+
+    const pinActive = now < (this._aggressionPinUntil || 0);
+
+    // Orchestral-martial (Clash Defiant) — computed BEFORE softClear (no soft gate)
+    const cinematicBed = orchestralFam
+      || (swellN > 0.32 && energy > 0.4)
+      || ((tex.ambient || 0) > 0.38 && energy > 0.42 && harsh < 0.28);
+    const orchestralMartial = !silence && cinematicBed && energy > 0.36 && (
+      kick > 0.2 || densFast > 0.22 || dens > 0.25 || fluxN > 0.22 || bassN > 0.28
+      || dropN > 0.35 || buildN > 0.55
+    );
+
+    // Martial heat — harsh path OR orchestral-martial (Clash stays armed)
+    const martial = !silence && (
+      orchestralMartial
+      || (harsh > 0.18 && densFast > 0.28 && energy > 0.25)
+      || (harsh > 0.2 && dens > 0.28 && energy > 0.28)
+      || (harsh > 0.22 && densFast > 0.22)
+      || (harsh > 0.18 && fluxN > 0.28 && energy > 0.26)
+      || (dropN > 0.4 && (harsh > 0.15 || kick > 0.25 || energy > 0.4))
+      || (buildN > 0.6 && densFast > 0.28 && energy > 0.35)
+      || (energy > 0.48 && densFast > 0.32 && kick > 0.28)
+    );
+
+    // softClear: !martial && !orchMart && soft energy/harsh + calmGenre
+    // IGNORE sticky vibe.aggression, densFast, kick (QA-0346)
+    const softClear = !silence
+      && !martial
+      && !orchestralMartial
+      && softEnergy
+      && softHarsh
+      && (calmGenre || spoken || fam === 'jazz')
+      && fam !== 'rock'
+      && fam !== 'noise'
+      && fam !== 'soundtrack'; // Clash ID3 never soft-clears via genre alone
+
+    const nightOwlSoft = softClear; // alias for storm gate / proof continuity
+
+    // Storm: never re-arm from sticky aggression under softClear conditions
+    const storm = !softClear && !silence && (
+      martial
+      || orchestralMartial
+      || (harsh > 0.2 && energy > 0.3)
+      || (harsh > 0.16 && kick > 0.28 && energy > 0.36)
+      || ((tex.harshWall || 0) > 0.28 && energy > 0.3)
+      || ((fam === 'rock' || fam === 'noise') && energy > 0.3)
+      || (dropN > 0.5 && energy > 0.35)
+      || (energy > 0.5 && densFast > 0.35 && harsh > 0.12)
+      // sticky aggression only extends pin when NOT a calm soft bed
+      || ((vibe.aggression || 0) > 0.55 && energy > 0.42)
+    );
+
+    const PIN_MS = 20000; // QA-0306: ≥20s martial pin
+    if (storm) {
+      const wasLocked = pinActive;
+      this._aggressionPinUntil = Math.max(this._aggressionPinUntil, now + PIN_MS);
+      const peakNow = Math.max(
+        vibe.aggression || 0,
+        harsh,
+        densFast * 0.75 + harsh * 0.55,
+        dens * 0.65 + harsh * 0.5
+      );
+      this._aggressionPeak = Math.max(this._aggressionPeak, peakNow);
+      this._aggressionHeldFloor = Math.max(
+        this._aggressionHeldFloor,
+        0.78,
+        peakNow * 0.95,
+        vibe.aggression || 0
+      );
+      if (!wasLocked || this._ladderSticky !== 'aggressive') {
+        this._ladderSticky = 'aggressive';
+        this._ladderChangedAt = now;
+        this._ladderCandidate = null;
+      }
+    }
+
+    // softClear already decided above (HOLD-0346) — clear pin when calm soft bed
+    const locked = (now < this._aggressionPinUntil) && !softClear;
+    vibe.aggressionLock = locked;
+    vibe.forbidPastoral = locked || martial || orchestralMartial;
+    // QA proof fields — Scene/DIAG can see pin actually armed
+    vibe.martial = !!martial;
+    vibe.orchestralMartial = !!orchestralMartial;
+    vibe.softClear = !!softClear;
+    vibe.pinArmed = !!locked;
+
+    if (locked) {
+      const floor = Math.max(0.78, this._aggressionHeldFloor, this._aggressionPeak * 0.95);
+      vibe.aggression = clamp(Math.max(vibe.aggression || 0, floor));
+      this._aggressionHeldFloor = Math.max(this._aggressionHeldFloor, vibe.aggression);
+      vibe.aggressive = vibe.aggression;
+      vibe.chaos = clamp(Math.max(vibe.chaos || vibe.chaotic || 0, 0.68));
+      vibe.chaotic = vibe.chaos;
+      vibe.warm = 0;
+      vibe.peaceful = Math.min(vibe.peaceful || 0, 0.08);
+      vibe.peace = vibe.peaceful;
+      vibe.calm = vibe.peaceful;
+      vibe.dominant = 'chaos';
+      vibe.ladder = 'aggressive';
+      this._ladderSticky = 'aggressive';
+    } else if (martial) {
+      vibe.aggression = clamp(Math.max(vibe.aggression || 0, 0.72));
+      vibe.aggressive = vibe.aggression;
+      vibe.chaos = clamp(Math.max(vibe.chaos || 0, 0.6));
+      vibe.chaotic = vibe.chaos;
+      vibe.warm = 0;
+      vibe.peaceful = Math.min(vibe.peaceful || 0, 0.1);
+      vibe.peace = vibe.peaceful;
+      vibe.calm = vibe.peaceful;
+      vibe.dominant = 'chaos';
+      this._ladderSticky = 'aggressive';
+      vibe.forbidPastoral = true;
+    } else if (softClear) {
+      // HOLD-0346: clear pin + drop sticky aggression floor (break chicken-egg)
+      this._aggressionPinUntil = 0;
+      this._aggressionPeak = Math.min(this._aggressionPeak, 0.15);
+      this._aggressionHeldFloor = 0;
+      vibe.aggressionLock = false;
+      vibe.forbidPastoral = false;
+      vibe.hardOnly = false;
+      vibe.aggression = Math.min(vibe.aggression || 0, 0.28);
+      vibe.aggressive = vibe.aggression;
+      vibe.chaos = Math.min(vibe.chaos || vibe.chaotic || 0, 0.25);
+      vibe.chaotic = vibe.chaos;
+      this._ladderSticky = (vibe.ladder === 'warm' || vibe.ladder === 'spoken') ? vibe.ladder : 'peaceful';
+    } else if (now >= this._aggressionPinUntil) {
+      this._aggressionHeldFloor = 0;
+      vibe.aggressionLock = false;
+      vibe.forbidPastoral = false;
+    }
+
+    // Re-sync proof after branch clears (no vibe→moment field drop)
+    vibe.pinArmed = !!vibe.aggressionLock;
+    vibe.martial = !!martial;
+    vibe.orchestralMartial = !!orchestralMartial;
+    vibe.softClear = !!softClear;
+    vibe.hardOnly = !!(vibe.aggressionLock || vibe.forbidPastoral || martial || orchestralMartial);
+    this._publishPinProof(vibe, ctx);
+  }
+
+  /** HUD / console proof for ?debug=1 (QA-0321) — never drop pin flags. */
+  _publishPinProof(vibe, ctx) {
+    const proof = {
+      pinArmed: !!vibe.pinArmed,
+      hardOnly: !!vibe.hardOnly,
+      martial: !!vibe.martial,
+      orchestralMartial: !!vibe.orchestralMartial,
+      softClear: !!vibe.softClear,
+      aggressionLock: !!vibe.aggressionLock,
+      forbidPastoral: !!vibe.forbidPastoral,
+      ladder: vibe.ladder || null,
+      genreFamily: ctx?.genreFamily || this._genreFamily || null,
+      energy: ctx?.energy ?? null,
+      t: ctx?.now ?? null
+    };
+    this._pinProof = proof;
+    try {
+      if (typeof globalThis !== 'undefined') {
+        globalThis.__LS_AUDIO_PIN__ = proof;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  getPinProof() {
+    return this._pinProof || null;
+  }
+
+  /** HOLD-0338: zero aggression pin / soft state on song/track change (Generate). */
+  resetHardState() {
+    this._aggressionPinUntil = 0;
+    this._aggressionPeak = 0;
+    this._aggressionHeldFloor = 0;
+    this._ladderSticky = 'peaceful';
+    this._ladderCandidate = null;
+    this._ladderCandidateSince = 0;
+    this._ladderChangedAt = 0;
+    this._hotSince = 0;
+    this._pinProof = null;
+    try {
+      if (typeof globalThis !== 'undefined') globalThis.__LS_AUDIO_PIN__ = null;
+    } catch (_) { /* ignore */ }
+  }
+
+  _smoothLadder(instant, vibe, now) {
+    // While lock/forbidPastoral: ladder stays aggressive; never warm/peaceful
+    if (vibe.aggressionLock || vibe.forbidPastoral || now < this._aggressionPinUntil) {
+      this._ladderSticky = 'aggressive';
+      this._ladderCandidate = null;
       return 'aggressive';
     }
-    if ((v.scary || 0) > 0.48 && (v.scary || 0) >= (v.aggression || 0) && (v.aggression || 0) < 0.5) {
-      return 'scary';
+
+    const sticky = this._ladderSticky || 'peaceful';
+    const scores = this._ladderScores(vibe);
+    const stickyScore = scores[sticky] ?? 0;
+    const instScore = scores[instant] ?? 0;
+
+    // Same as sticky — reset candidate
+    if (instant === sticky) {
+      this._ladderCandidate = null;
+      this._ladderCandidateSince = 0;
+      return sticky;
     }
-    if ((v.tense || 0) > 0.48 && (v.aggression || 0) < 0.5) return 'tense';
-    if ((v.warm || 0) > 0.38 && (v.aggression || 0) < 0.42) return 'warm';
-    if ((v.peace || v.peaceful || 0) > 0.4) return 'peaceful';
-    // fallback by dominant
-    const d = v.dominant;
-    if (d === 'chaos') return 'aggressive';
-    if (d === 'peace') return 'peaceful';
-    return d || 'peaceful';
+
+    // Min dwell — aggressive holds much longer (QA: pin ≥12–15s)
+    const sinceChange = now - (this._ladderChangedAt || 0);
+    const minDwell = sticky === 'aggressive' ? 20000 : 2200;
+    if (sinceChange < minDwell && this._ladderChangedAt > 0) {
+      // Allow escalate into aggressive early; block de-escalate / pastoral hop
+      const escalate = this._ladderRank(instant) > this._ladderRank(sticky);
+      if (!(escalate && instant === 'aggressive')) {
+        return sticky;
+      }
+    }
+
+    // Block warm/peaceful while sticky aggressive even after pin if peak still hot
+    if (sticky === 'aggressive' && (instant === 'warm' || instant === 'peaceful')) {
+      if ((vibe.aggression || 0) > 0.35 || this._aggressionPeak > 0.4) {
+        this._ladderCandidate = null;
+        return sticky;
+      }
+    }
+
+    // Need margin over sticky (asymmetric: easier to escalate to aggressive, harder to drop)
+    const escalate = this._ladderRank(instant) > this._ladderRank(sticky);
+    const marginNeed = escalate
+      ? (instant === 'aggressive' ? 0.06 : 0.12)
+      : (sticky === 'aggressive' ? 0.28 : 0.18);
+    if (instScore < stickyScore + marginNeed && stickyScore > 0.2) {
+      this._ladderCandidate = null;
+      return sticky;
+    }
+
+    // Escalate into aggressive NOW — no candidate wait
+    if (escalate && instant === 'aggressive') {
+      this._ladderSticky = 'aggressive';
+      this._ladderChangedAt = now;
+      this._ladderCandidate = null;
+      this._ladderCandidateSince = 0;
+      return 'aggressive';
+    }
+
+    // Candidate dwell — leaving aggressive takes longer
+    if (this._ladderCandidate !== instant) {
+      this._ladderCandidate = instant;
+      this._ladderCandidateSince = now;
+      return sticky;
+    }
+    const holdMs = sticky === 'aggressive' ? 3500 : 1400;
+    if (now - this._ladderCandidateSince < holdMs) {
+      return sticky;
+    }
+
+    // Commit
+    this._ladderSticky = instant;
+    this._ladderChangedAt = now;
+    this._ladderCandidate = null;
+    this._ladderCandidateSince = 0;
+    return instant;
+  }
+
+  _ladderRank(name) {
+    const order = { spoken: 0, peaceful: 1, warm: 2, tense: 3, scary: 3, aggressive: 4 };
+    return order[name] ?? 1;
   }
 
   /**
@@ -778,9 +1202,9 @@ export class AudioAnalyzer {
     let arousal = vibe.arousal || 0;
 
     if (fam === 'rock' || fam === 'noise') {
-      agg = clamp(agg * 1.25 + 0.08);
-      chaos = clamp(chaos * 1.2 + 0.06);
-      arousal = clamp(arousal * 1.1 + 0.04);
+      agg = clamp(agg * 1.35 + 0.12);
+      chaos = clamp(chaos * 1.28 + 0.1);
+      arousal = clamp(arousal * 1.15 + 0.06);
     } else if (fam === 'electronic' && (tex.fourOnFloor || 0) > 0.4) {
       // EDM energy ≠ metal aggression — modest lift on drop only
       agg = clamp(agg * 1.05 + (vibe.tense || 0) * 0.05);
@@ -788,20 +1212,37 @@ export class AudioAnalyzer {
     } else if (fam === 'hiphop') {
       agg = clamp(agg * 1.08 + (roles.kick || 0) * 0.06);
       arousal = clamp(arousal * 1.08);
-    } else if (fam === 'classical' || fam === 'gospel' || fam === 'spoken' || fam === 'jazz') {
+    } else if (fam === 'spoken') {
       agg *= 0.45;
       chaos *= 0.55;
+    } else if (fam === 'classical' || fam === 'gospel' || fam === 'jazz' || fam === 'soundtrack') {
+      // Soft adagio vs orchestral-martial (Clash Defiant / Soundtrack) — keep teeth when hot
+      const hot = (roles.kick || 0) > 0.22 || (roles.harsh || 0) > 0.18
+        || (roles.bass || 0) > 0.32
+        || ((tex.swell || 0) > 0.3 && (roles.kick || 0) > 0.16)
+        || ((tex.ambient || 0) > 0.38 && (roles.kick || 0) > 0.22);
+      if (hot) {
+        agg = clamp(agg * 1.25 + 0.12);
+        chaos = clamp(chaos * 1.18 + 0.1);
+        arousal = clamp(arousal * 1.12 + 0.06);
+      } else {
+        agg *= 0.5;
+        chaos *= 0.55;
+      }
     } else if (fam === 'folk' || fam === 'rnb' || fam === 'indie') {
       agg *= 0.65;
     }
 
-    if ((tex.ambient || 0) > 0.45 || (vibe.spoken || 0) > 0.48) {
+    // Ambient crush only when truly soft (low kick/harsh) — not orchestral pads+punch
+    if (((tex.ambient || 0) > 0.45 || (vibe.spoken || 0) > 0.48)
+      && (roles.kick || 0) < 0.28 && (roles.harsh || 0) < 0.22) {
       agg *= 0.35;
       chaos *= 0.4;
     }
 
-    // Soft folk / ambient anti: never leave aggression high enough to invite warzone
-    if (fam === 'folk' || (tex.sparseAcoustic || 0) > 0.45) {
+    // Soft folk / quiet sparse only
+    if ((fam === 'folk' || (tex.sparseAcoustic || 0) > 0.45)
+      && (roles.kick || 0) < 0.28 && (roles.harsh || 0) < 0.2) {
       agg = Math.min(agg, 0.35);
       chaos = Math.min(chaos, 0.3);
     }
@@ -822,7 +1263,7 @@ export class AudioAnalyzer {
     } else if ((vibe.warm || 0) > 0.4 && vibe.aggression < 0.42) {
       vibe.dominant = 'warm';
     }
-    vibe.ladder = this._ladderFromVibe(vibe);
+    // ladder applied by _smoothLadder in update()
   }
 
   /**
@@ -893,7 +1334,7 @@ export class AudioAnalyzer {
     if (this._explicitFamily && HARSH_PROTECTED.has(this._explicitFamily)) {
       const protectedHint = {
         gospel: 'ambient', pop: 'edm', kpop: 'edm', rnb: 'ambient',
-        folk: 'folk', classical: 'classical', latin: 'edm', afro: 'edm'
+        folk: 'folk', classical: 'classical', soundtrack: 'classical', latin: 'edm', afro: 'edm'
       }[this._explicitFamily] || this._genreHint;
       // Soft lean still allowed within family, not metal
       let harsh = texture.harshWall || 0;

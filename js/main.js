@@ -5,15 +5,15 @@
  * Flow: identify song → fetch lyrics → plan from lyrics → live lyric concepts direct scenery;
  * instruments animate how the world moves.
  */
-import { AudioAnalyzer } from './audio/analyzer.js';
+import { AudioAnalyzer } from './audio/analyzer.js?v=cohere7';
 import { VocalEstimate } from './audio/vocalEstimate.js';
 import { LyricsParser } from './lyrics/parser.js';
 import { SemanticExtractor } from './lyrics/semantic.js';
 import { LyricsAlignment } from './lyrics/alignment.js';
 import { StructureAnalyzer } from './structure/analyzer.js';
 import { EmotionEngine } from './emotion/engine.js';
-import { ScenePlanner } from './director/scenePlan.js';
-import { Renderer } from './viz/renderer.js';
+import { ScenePlanner } from './director/scenePlan.js?v=cohere7';
+import { Renderer } from './viz/renderer.js?v=cohere7';
 import { Controls } from './ui/controls.js';
 import { SongIdentity } from './song/identity.js';
 
@@ -398,6 +398,10 @@ class LightShowApp {
         });
       }
 
+      // HOLD-0338: clear Audio aggression pin + Scene latch on Generate (no Clash→Night Owl bleed)
+      try { this.analyzer?.resetHardState?.(); } catch (_) { /* soft */ }
+      try { this.director._hardLatchUntil = 0; this.director._hotSince = 0; this.director._packHoldUntil = 0; this.director._lastTrackKey = null; } catch (_) { /* soft */ }
+
       // Pre-plan only after lyrics resolved
       this.director.prePlan({
         duration: this.duration || 180,
@@ -501,7 +505,7 @@ class LightShowApp {
     const section = this.structure.sectionAt(t);
     const lyricState = this.alignment.update(t, vocal, section);
 
-    // LIVE lyric→scene: on phrase change, re-extract concepts for THAT line
+    // LIVE lyric→scene: on phrase/line advance, extractLine + reactToLyricConcept (props RT)
     if (this.settings?.lyricsOn && lyricState.phrase?.text) {
       const key = lyricState.phraseIndex + '|' + lyricState.phrase.text;
       if (key !== this._lastLyricKey) {
@@ -514,8 +518,15 @@ class LightShowApp {
         if (lineConcept) {
           this.director.reactToLyricConcept(lineConcept, now, {
             section,
+            audio,
             speechLike,
-            speechSteer: lineConcept.speechSteer || 0
+            speechSteer: lineConcept.speechSteer || 0,
+            glueScore: lineConcept.glueScore,
+            worldCue: lineConcept.worldCue || null,
+            props: lineConcept.props || null,
+            // Explicit line advance id → props/motif refresh (not verse-gated)
+            lineChangeId: key,
+            phraseIndex: lyricState.phraseIndex
           });
         }
       }
@@ -551,13 +562,30 @@ class LightShowApp {
     });
 
     if (now % 500 < 20) {
+      const proofQ = (typeof location !== 'undefined' && location.search) || '';
+      const wantProof = /[?&]v=cohere6\b/.test(proofQ)
+        || /[?&]debug=hardlock\b/.test(proofQ)
+        || /[?&]debug=1\b/.test(proofQ)
+        || !!(this.settings?.debugHardlock);
       this.controls.updateHud({
         section: section?.label || section?.type,
         preset: directive.preset,
         concept: directive.liveConceptId,
         scale: directive.scale?.name,
         event: liveHint?.event || '',
-        fps: this.renderer.fps
+        fps: this.renderer.fps,
+        // HOLD-0321 proof for GATE / Works Tester
+        proof: wantProof,
+        hardOnly: !!directive.hardOnly,
+        hardLatchMsLeft: directive.hardLatchMsLeft,
+        packFamily: directive.packFamily,
+        pinArmed: !!directive.pinArmed,
+        martialHeat: !!directive.martialHeat,
+        martial: !!directive.martial,
+        orchestralMartial: !!directive.orchestralMartial,
+        forbidPastoral: !!directive.forbidPastoral,
+        aggressionLock: !!directive.aggressionLock,
+        hardHud: directive.hardHud || null
       });
     }
   }

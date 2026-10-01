@@ -128,6 +128,25 @@ export class NarrativeState {
     return this.world.castIdentity;
   }
 
+
+  /** Soft pastoral / spoken / fauna sticky WHO (HOLD-0306 clear on pin). */
+  isSoftCastIdentity(id = this.world.castIdentity) {
+    if (!id) return false;
+    const softArch = /^(pastoral_walker|nature_fauna|sacred_solitary|spoken_intimate|meadow_wanderer)$/;
+    const softChar = /^(path_walker_dawn|meadow_wanderer|lake_shore_figure|autumn_road_traveler|heal_hands_open|hooded_pilgrim|crane_dusk|herd_silhouette|fish_motes|songbird_pair|stag_fog|butterflies_wash|close_confessor)$/;
+    const softOutfit = /^(linen_dawn|moss_trail|aisle_linen|water_gloss|desk_lamp)$/;
+    const softStyle = id.style === 'dream';
+    return softArch.test(id.archetype || '')
+      || softChar.test(id.characterId || '')
+      || softOutfit.test(id.outfitId || '')
+      || softStyle;
+  }
+
+  /** Clear soft sticky WHO immediately when aggression pin asserts. */
+  clearSoftCastIdentity() {
+    if (this.isSoftCastIdentity()) this.world.castIdentity = null;
+  }
+
   /** Clear sticky WHO — only on earned ladder step change (Scene). */
   clearCastIdentity() {
     this.world.castIdentity = null;

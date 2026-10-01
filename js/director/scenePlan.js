@@ -15,18 +15,19 @@
  * lyricStickExpire / sectionChangeId: when section TYPE or chorus.repeat changes,
  * Visual Engine / Lyrics Brain clear sticky last-good phrase (Quality gap 5).
  */
-import { NarrativeState } from './narrativeState.js';
+import { NarrativeState } from './narrativeState.js?v=cohere7';
 import { VariationController } from './variation.js';
 import { ScaleDirector } from './scale.js';
-import { castFromConcept, modulateCast, planCastForSection } from './casting.js';
-import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js';
-import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js';
+import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=cohere7';
+import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=cohere7';
+import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=cohere7';
 import {
   dominantVibe, vibePackFamily, vibeLeadPresets, vibeForbiddenPresets, genreLeadPresets,
   genreForbiddenPresets, ladderLeadPresets, resolveLadder, isAggressiveVibe, ladderStepChanged,
-  inferSpeechLikeFromRoles, readVibe, STICKY_MS, AGGRESSION_THRESH
-} from './vibeCast.js';
-import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js';
+  inferSpeechLikeFromRoles, readVibe, readMoment, STICKY_MS, PIN_HOLD_MS, ESCAPE_MS, AGGRESSION_THRESH,
+  hardLockPresets, isHardLockPreset, softForbiddenUnderHard, isSoftForbiddenUnderHard
+} from './vibeCast.js?v=cohere7';
+import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=cohere7';
 
 const SECTION_INTENTS = {
   intro: {
@@ -225,6 +226,10 @@ export class ScenePlanner {
     this._liveConceptAt = 0;
     this._liveTint = null;
     this._lastPhraseKey = '';
+    /** Phrase/line advance id from main (phraseIndex|text) — props refresh key */
+    this._lastLineChangeId = '';
+    /** Current line's scenic prop ids — emit promptly on line change */
+    this._liveLineProps = [];
     /** Live lyric steer lock — section plan must not immediately undo morph */
     this._liveSteerUntil = 0;
     this._liveSteerPreset = null;
@@ -236,6 +241,14 @@ export class ScenePlanner {
     this._lastVibeDom = null;
     this._speechSteer = 0;
     this._lastGenreMeta = null;
+    /** Latch congruent pack after congruence win (esp. aggressive) */
+    this._packHoldUntil = 0;
+    /** HOLD-0314: hard allowlist afterglow after pin */
+    this._hardLatchUntil = 0;
+    this._hotSince = 0;
+    this._lastTrackKey = null;
+    this._hardHud = null;
+    this._pinAsserted = false;
   }
 
   /**
@@ -268,6 +281,8 @@ export class ScenePlanner {
     this._liveSteerUntil = 0;
     this._liveSteerPreset = null;
     this._lastPhraseKey = '';
+    this._lastLineChangeId = '';
+    this._liveLineProps = [];
     this._lastSectionType = null;
     this._lastSectionRepeat = null;
     this._motifFiredForSection = null;
@@ -275,6 +290,12 @@ export class ScenePlanner {
     this._lastCast = null;
     this._lastVibeDom = null;
     this._speechSteer = 0;
+    this._packHoldUntil = 0;
+    this._hardLatchUntil = 0;
+    this._hotSince = 0;
+    this._lastTrackKey = null;
+    this._hardHud = null;
+    this._pinAsserted = false;
 
     // Peaceful/calm or nature language must seed the nature world before roulette.
     const moodKey = String(mood || '').toLowerCase();
@@ -282,13 +303,18 @@ export class ScenePlanner {
     const fantasyNature = /\b(nature|natural|forest|woodland|woods|meadow|lake|ocean|river|mountain|garden|tree|trees|wildflower|pastoral|fauna)\b/i.test(fantasyText || '');
     const styleNature = /\b(nature|natural|pastoral|forest|woodland|woods|meadow|lake|ocean|river|mountain|garden|fauna|outdoors)\b/i.test(styleText);
     const peacefulPlan = moodKey === 'peaceful' || moodKey === 'calm';
-    const naturePlan = peacefulPlan || styleNature || fantasyNature;
-    const planVibeDom = naturePlan ? { family: 'peaceful', speechLike: false } : null;
+    const moodHard = /aggressive|chaotic|dark|intense|angry|war|metal|storm/.test(moodKey);
+    // HOLD-0314: fantasy "forest" on martial tracks must NOT seed nature pack
+    const naturePlan = !moodHard && (peacefulPlan || styleNature || fantasyNature);
+    const planVibeDom = moodHard
+      ? { family: 'chaotic', ladder: 'aggressive', forbidPastoral: true, aggressionLock: true, speechLike: false }
+      : (naturePlan ? { family: 'peaceful', speechLike: false } : null);
 
     // Seed pack family from primary concept, with peaceful/nature taking priority.
     const primaryPack = primary?.id && CONCEPT_PACK[primary.id];
     if (primaryPack) this.narrative.setPackFamily(primaryPack.family);
-    if (naturePlan) this.narrative.setPackFamily('nature');
+    if (moodHard) this.narrative.setPackFamily('chaos');
+    else if (naturePlan) this.narrative.setPackFamily('nature');
 
     const intensityMul = intensity === 'low' ? 0.65 : intensity === 'high' ? 1.25 : intensity === 'extreme' ? 1.5 : 1;
 
@@ -588,9 +614,15 @@ export class ScenePlanner {
     }
     if (styleList.includes('mythological')) list.unshift('ancient_ruins', 'cathedral_space');
 
+    const hardPlan = !!(dom?.forbidPastoral || dom?.aggressionLock
+      || String(dom?.ladder || '').toLowerCase() === 'aggressive'
+      || dom?.family === 'chaotic');
     const forbidden = new Set([
-      ...vibeForbiddenPresets(dom),
-      ...genreForbiddenPresets(genreHint)
+      ...vibeForbiddenPresets(hardPlan
+        ? { ...dom, ladder: 'aggressive', family: 'chaotic', forbidPastoral: true, aggressionLock: true }
+        : dom),
+      // HOLD-0306: genreForbidden must not ban HARD_LOCK while pin
+      ...(hardPlan ? [] : genreForbiddenPresets(genreHint))
     ]);
     const seen = new Set();
     return list
@@ -654,6 +686,11 @@ export class ScenePlanner {
     const allowLeave = nextSectionType === 'breakdown' || nextSectionType === 'drop' || nextSectionType === 'outro';
 
     return [...presets].sort((a, b) => {
+      // Chorus/verse: keep the SAME world first (intensify), then family, then affinity.
+      if (stayFamily && !allowLeave && prevPreset) {
+        if (a === prevPreset && b !== prevPreset) return -1;
+        if (b === prevPreset && a !== prevPreset) return 1;
+      }
       const famA = familyMembers.includes(a) ? 0 : 1;
       const famB = familyMembers.includes(b) ? 0 : 1;
       if (stayFamily && !allowLeave && famA !== famB) return famA - famB;
@@ -717,11 +754,26 @@ export class ScenePlanner {
    * Live cast for tick — plant/amplify from section plan + live concept; respect identity.
    */
   _liveCast(sp, secType, chorusRepeat, scaleName, vocal, activePhrase, audio = null, speechSteer = 0, roles = null, sectionChangeId = 0) {
+    const moment = readMoment(audio);
     const concept = this._liveConcept || (sp?.conceptId ? { id: sp.conceptId, symbols: sp.symbols } : null);
     let base = castFromConcept(concept);
     const identity = this.narrative.getCastIdentity();
     const dom = this._lastVibeDom || dominantVibe(audio);
-    const speechLike = !!dom.speechLike || speechSteer >= 0.45;
+    const earlyVocalFocus = !!(
+      (moment?.vocalish ?? 0) >= 0.38
+      || (audio?.roles?.vocalish ?? audio?.roles?.lead ?? 0) >= 0.42
+      || vocal?.focus
+    );
+    // HOLD-0306: pin WINS speechLike in live cast (DIAG Path B/C)
+    const _pinLive = !!(dom?.forbidPastoral || dom?.aggressionLock || dom?.aggressive
+      || dom?.martial || dom?.orchestralMartial || dom?.pinArmed
+      || audio?.vibe?.forbidPastoral || audio?.vibe?.aggressionLock
+      || audio?.vibe?.martial || audio?.vibe?.orchestralMartial || audio?.vibe?.pinArmed
+      || moment?.forbidPastoral || moment?.aggressionLock
+      || moment?.martial || moment?.orchestralMartial || moment?.pinArmed
+      || String(dom?.ladder || '').toLowerCase() === 'aggressive'
+      || dom?.family === 'chaotic');
+    const speechLike = _pinLive ? false : (!!dom.speechLike || speechSteer >= 0.45);
 
     // Verse/pre establish identity; chorus keeps same people
     if (secType === 'verse' || secType === 'pre' || secType === 'intro') {
@@ -779,6 +831,7 @@ export class ScenePlanner {
       vibe: audio?.vibe || dom.vibe,
       speechLike,
       speechSteer,
+      vocalFocus: earlyVocalFocus,
       expireAggression: secType === 'breakdown' || dom.family === 'peaceful',
       stickyCharacterId: identity?.characterId || this._lastCast?.characterId || null,
       packFamily,
@@ -808,11 +861,13 @@ export class ScenePlanner {
           holdSilent: !!cast.holdSilent,
           count: cast.count,
           opacity: cast.opacity,
-          scale: cast.scale
+          scale: cast.scale,
+          vocalFocus: earlyVocalFocus
         });
         const _L = dom?.ladder || dom?.family || 'neutral';
-        const _agg = _L === 'aggressive' || dom?.family === 'chaotic' || !!dom?.aggressive;
-        const _soft = _L === 'peaceful' || !!dom?.speechLike;
+        const _agg = !!(dom?.forbidPastoral || dom?.aggressionLock || _pinLive)
+          || _L === 'aggressive' || dom?.family === 'chaotic' || !!dom?.aggressive;
+        const _soft = !_agg && (_L === 'peaceful' || !!dom?.speechLike);
         const _fbArch = _agg ? 'chaos_fracture' : _L === 'scary' ? 'dread_sparse' : _soft ? 'pastoral_walker'
           : _L === 'warm' ? 'fg_performer' : _L === 'tense' ? 'tableau_figure' : 'fg_performer';
         const _fbOutfit = _agg ? 'fracture_rag' : _L === 'scary' ? 'dread_coat' : _soft ? 'linen_dawn'
@@ -826,7 +881,8 @@ export class ScenePlanner {
           ? lib.members
           : null;
       } catch (_) {
-        const _agg2 = (dom?.ladder === 'aggressive' || dom?.family === 'chaotic');
+        const _agg2 = !!(dom?.forbidPastoral || dom?.aggressionLock || _pinLive)
+          || (dom?.ladder === 'aggressive' || dom?.family === 'chaotic');
         cast.archetype = cast.archetype || (_agg2 ? 'chaos_fracture' : 'fg_performer');
         cast.characterId = cast.characterId || null;
         cast.outfitId = cast.outfitId || (_agg2 ? 'fracture_rag' : 'highway_dust');
@@ -837,8 +893,9 @@ export class ScenePlanner {
       // Guarantee ≥1 drawable member when kind≠none
       if (!Array.isArray(cast.members) || cast.members.length === 0) {
         const kind = cast.kind === 'none' ? 'traveler' : cast.kind;
-        const _agg3 = (dom?.ladder === 'aggressive' || dom?.family === 'chaotic');
-        const _soft3 = (dom?.ladder === 'peaceful' || !!dom?.speechLike);
+        const _agg3 = !!(dom?.forbidPastoral || dom?.aggressionLock || _pinLive)
+          || (dom?.ladder === 'aggressive' || dom?.family === 'chaotic');
+        const _soft3 = !_agg3 && (dom?.ladder === 'peaceful' || !!dom?.speechLike);
         cast.characterId = cast.characterId || (_agg3 ? 'scatter_runners' : _soft3 ? 'path_walker_dawn' : 'mic_stand_lead');
         cast.outfitId = cast.outfitId || (_agg3 ? 'fracture_rag' : _soft3 ? 'linen_dawn' : 'after_hours_red');
         cast.archetype = cast.archetype || (_agg3 ? 'chaos_fracture' : _soft3 ? 'pastoral_walker' : 'fg_performer');
@@ -944,8 +1001,10 @@ export class ScenePlanner {
 
     // P0 QA-2142/2149/1345 — ≥1 large FG hub EVERY frame (resurrects kind none)
     const liveRolesEns = roles || this._rolesIntents(audio, vocal);
+    // Realtime vocalish is the fastest lead cue; roles remain the fallback.
     const vocalFocus = !!(
-      (liveRolesEns?.vocalish ?? liveRolesEns?.lead ?? 0) >= 0.42
+      (moment?.vocalish ?? 0) >= 0.38
+      || (liveRolesEns?.vocalish ?? liveRolesEns?.lead ?? 0) >= 0.42
       || (audio?.roles?.vocalish ?? audio?.roles?.lead ?? 0) >= 0.42
       || vocal?.focus
     );
@@ -957,7 +1016,9 @@ export class ScenePlanner {
       sectionType: secType,
       ladder: ladderNow,
       aggression: aggNow,
-      vocalFocus
+      vocalFocus,
+      forbidPastoral: !!(dom?.forbidPastoral || audio?.vibe?.forbidPastoral || moment?.forbidPastoral),
+      aggressionLock: !!(dom?.aggressionLock || audio?.vibe?.aggressionLock || moment?.aggressionLock)
     });
 
     // DANCE after presence floors — stamp danceIntent/dance on final hub+members
@@ -971,14 +1032,18 @@ export class ScenePlanner {
         speechLike,
         vibeFamily: dom.family || 'neutral',
         danceBias,
-        intensity: Math.max(scaleName === 'intimate' ? 0.35 : 0.5, (audio?.energy || 0.4)),
+        intensity: Math.max(scaleName === 'intimate' ? 0.35 : 0.5,
+          (typeof moment?.energy === 'number' ? moment.energy : (audio?.energy || 0.4))),
         chorusRepeat,
         afterGate: secType === 'breakdown' || secType === 'drop',
         roles: liveRoles,
         archetype: cast.archetype,
         ladder: ladderNow,
         aggression: aggNow,
-        energy: audio?.energy || 0
+        energy: typeof moment?.energy === 'number' ? moment.energy : (audio?.energy || 0),
+        moment,
+        forbidPastoral: !!(dom?.forbidPastoral || audio?.vibe?.forbidPastoral || moment?.forbidPastoral),
+        aggressionLock: !!(dom?.aggressionLock || audio?.vibe?.aggressionLock || moment?.aggressionLock)
       });
     }
 
@@ -990,12 +1055,23 @@ export class ScenePlanner {
     const planted = this.narrative.plantedPropIds();
     const fromPlan = (sp?.motifProps || []).map(p => p.id);
     const concept = this._liveConcept;
-    const liveIds = concept ? propsForConcept(concept, concept.symbols || []) : [];
-    let ids = planted.length ? planted : (fromPlan.length ? fromPlan : liveIds);
+    const liveIds = (this._liveLineProps && this._liveLineProps.length)
+      ? this._liveLineProps.slice()
+      : (concept ? propsForConcept(concept, concept.symbols || concept.motif || []) : []);
+    let ids;
 
-    if ((secType === 'verse' || secType === 'pre') && liveIds.length) {
-      this.narrative.plantProps(liveIds, secType);
-      ids = this.narrative.plantedPropIds();
+    // Line→props RT: CURRENT line scenic leads emission (not oldest planted / verse wait).
+    // Planted book still used for chorus callback merge + soft fill. World family stays sticky elsewhere.
+    if (liveIds.length) {
+      const glue = typeof concept?.glueScore === 'number' ? concept.glueScore : 0.55;
+      if (glue >= 0.35) {
+        this.narrative.plantProps(liveIds, secType || 'verse');
+      }
+      const fill = planted.filter((id) => !liveIds.includes(id));
+      ids = [...liveIds, ...fill].slice(0, 4);
+    } else {
+      // No live line props — prefer newest planted (slice(-3)), then plan
+      ids = planted.length ? planted.slice(-3) : (fromPlan.length ? fromPlan : []);
     }
 
     let props = buildMotifProps(ids, {
@@ -1035,6 +1111,7 @@ export class ScenePlanner {
       activePhrase,
       now = performance.now()
     } = ctx;
+    const moment = readMoment(audio);
 
     if (!this.plan) {
       return this._fallbackDirective(emotion, section, audio, vocal);
@@ -1061,7 +1138,46 @@ export class ScenePlanner {
       speechLike: speechSteer >= 0.45 || inferSpeechLikeFromRoles(audio)
     });
     this._lastVibeDom = vibeDom;
-    const speechLike = !!vibeDom.speechLike || speechSteer >= 0.45;
+    // HOLD-0338: softClear BEFORE pin — Night Owl must never land early metal_hall
+    // HOLD-0346: soft energy bed (!martial && !orchMart) forces softClear even if pinArmed stuck
+    const _momentSoft = readMoment(audio);
+    const _martialEarly = !!(audio?.vibe?.martial || audio?.vibe?.orchestralMartial
+      || _momentSoft?.martial || _momentSoft?.orchestralMartial
+      || vibeDom?.martial || vibeDom?.orchestralMartial);
+    const _energyEarly = Number(audio?.energy ?? _momentSoft?.energy ?? 0);
+    const _aggEarly = Number(vibeDom?.aggression ?? audio?.vibe?.aggression ?? _momentSoft?.aggression ?? 0);
+    const _harshEarly = Number(audio?.roles?.harsh ?? audio?.instruments?.harsh ?? _momentSoft?.harsh ?? 0) || 0;
+    const _genreHardEarly = /metal|rock_metal|industrial|punk/i.test(String(audio?.genreHint || audio?.genreFamily || ''));
+    // HOLD-0346: ignore floored aggression — pin sets agg≥0.78 so agg gate would never soft-clear
+    const _famEarly = String(audio?.genreFamily || audio?.genreHint || '').toLowerCase();
+    const softEnergyEarly = !_martialEarly && !_genreHardEarly
+      && _energyEarly < 0.4 && _harshEarly < 0.25
+      && !/soundtrack|classical/.test(_famEarly);
+    const softClearEarly = !!(vibeDom?.softClear || audio?.vibe?.softClear || _momentSoft?.softClear
+      || softEnergyEarly);
+    if (softClearEarly) {
+      vibeDom.softClear = true;
+      vibeDom.forbidPastoral = false;
+      vibeDom.aggressionLock = false;
+      vibeDom.pinArmed = false;
+      vibeDom.martial = false;
+      vibeDom.orchestralMartial = false;
+      vibeDom.aggressive = false;
+      if (vibeDom.family === 'chaotic' || vibeDom.family === 'scary') vibeDom.family = 'peaceful';
+      if (vibeDom.ladder === 'aggressive') vibeDom.ladder = 'peaceful';
+    }
+    const pinEarly = !softClearEarly && !!(vibeDom?.forbidPastoral || vibeDom?.aggressionLock
+      || vibeDom?.martial || vibeDom?.orchestralMartial || vibeDom?.pinArmed
+      || audio?.vibe?.forbidPastoral || audio?.vibe?.aggressionLock
+      || audio?.vibe?.martial || audio?.vibe?.orchestralMartial || audio?.vibe?.pinArmed
+      || _momentSoft?.forbidPastoral || _momentSoft?.aggressionLock
+      || _momentSoft?.martial || _momentSoft?.orchestralMartial || _momentSoft?.pinArmed
+      || String(vibeDom?.ladder || '').toLowerCase() === 'aggressive');
+    const speechLike = pinEarly ? false : (!!vibeDom.speechLike || speechSteer >= 0.45 || softClearEarly);
+    if (pinEarly) {
+      vibeDom.speechLike = false;
+      if (vibeDom.family === 'spoken' || vibeDom.family === 'peaceful') vibeDom.family = 'chaotic';
+    }
 
     // GENRE-MAP pleasure — soft bias before roulette; spoken clamps win; unknown ≠ neon
     let genreMeta = null;
@@ -1103,19 +1219,76 @@ export class ScenePlanner {
         this.narrative.setPackFamily(fam);
       }
     }
-    // Metal / aggressive ladder → prefer chaos pack (escape neon hub)
-    if (!speechLike) {
-      const gh = String(audio?.genreHint || '').toLowerCase();
-      const gf = String(audio?.genreFamily || '').toLowerCase();
+    // HOLD-0306: while pin / ladder aggressive → FORCE packFamily=chaos EVERY frame
+    // HOLD-0338: softClearEarly refuses this path (Night Owl never early-clamped to metal_hall)
+    {
+      const momentPin = readMoment(audio);
       const ladder = String(audio?.vibe?.ladder || vibeDom?.ladder || '').toLowerCase();
-      if (gh === 'metal' || gf === 'rock_metal' || gf === 'metal' || ladder === 'aggressive') {
-        const cur = this.narrative.getPackFamily();
-        if (!cur || cur === 'nature' || cur === 'stage_pop' || cur === 'street_block' || cur === 'neon' || cur === 'groove') {
-          this.narrative.setPackFamily('chaos');
+      const pin = !softClearEarly && !!(vibeDom?.forbidPastoral || vibeDom?.aggressionLock
+        || vibeDom?.martial || vibeDom?.orchestralMartial || vibeDom?.pinArmed
+        || audio?.vibe?.forbidPastoral || audio?.vibe?.aggressionLock
+        || audio?.vibe?.martial || audio?.vibe?.orchestralMartial || audio?.vibe?.pinArmed
+        || momentPin?.forbidPastoral || momentPin?.aggressionLock
+        || momentPin?.martial || momentPin?.orchestralMartial || momentPin?.pinArmed
+        || ladder === 'aggressive');
+      if (pin) {
+        this.narrative.setPackFamily('chaos');
+        this._hardLatchUntil = Math.max(this._hardLatchUntil || 0, now + PIN_HOLD_MS);
+        // HOLD-0314: rewrite soft section presets → HARD_LOCK (sp never re-asks forest/deer)
+        if (this.plan?.sectionPlans) {
+          const hard = hardLockPresets();
+          for (let i = 0; i < this.plan.sectionPlans.length; i++) {
+            const row = this.plan.sectionPlans[i];
+            if (!isHardLockPreset(row.preset)) {
+              row.preset = hard[i % hard.length];
+              row.alternatePresets = hard.slice();
+            }
+          }
+        }
+        if (!isHardLockPreset(this.currentPreset)) {
+          const h0 = hardLockPresets()[0];
+          this.variation.recordScene(h0, now);
+          // HOLD-0321: never morph FROM soft — Continuity would paint forest/deer
+          this.transition = {
+            from: h0,
+            to: h0,
+            start: now,
+            duration: 120,
+            mode: 'cut'
+          };
+          this.currentPreset = h0;
+          this._liveSteerPreset = null;
+          this._liveSteerUntil = 0;
+          this._packHoldUntil = now + PIN_HOLD_MS;
+        }
+        try {
+          if (typeof this.narrative.clearSoftCastIdentity === 'function') {
+            this.narrative.clearSoftCastIdentity();
+          } else if (typeof this.narrative.isSoftCastIdentity === 'function'
+            && this.narrative.isSoftCastIdentity()) {
+            this.narrative.clearCastIdentity();
+          }
+          if (!this._pinAsserted) {
+            if (typeof this.narrative.clearCastIdentity === 'function') this.narrative.clearCastIdentity();
+            else if (this.narrative.world) this.narrative.world.castIdentity = null;
+            this._pinAsserted = true;
+          }
+        } catch (_) { /* soft */ }
+      } else if (now >= (this._hardLatchUntil || 0)) {
+        this._pinAsserted = false;
+      }
+      if (!speechLike && !pin) {
+        const gh = String(audio?.genreHint || '').toLowerCase();
+        const gf = String(audio?.genreFamily || '').toLowerCase();
+        if (gh === 'metal' || gf === 'rock_metal' || gf === 'metal' || ladder === 'aggressive') {
+          const cur = this.narrative.getPackFamily();
+          if (!cur || cur === 'nature' || cur === 'stage_pop' || cur === 'street_block' || cur === 'neon' || cur === 'groove') {
+            this.narrative.setPackFamily('chaos');
+          }
         }
       }
     }
-    // Cast identity stickiness: clear only on earned ladder step change (verse→chorus keeps WHO)
+    // Cast identity stickiness: clear on earned ladder step change (verse→chorus keeps WHO)
     {
       const ladderNow = String(audio?.vibe?.ladder || vibeDom?.ladder || '').toLowerCase();
       if (ladderStepChanged(this._lastLadder, ladderNow)) {
@@ -1127,38 +1300,247 @@ export class ScenePlanner {
       this._lastLadder = ladderNow || this._lastLadder;
     }
 
-    // Vibe congruence repair is independent of section boundaries. In
-    // particular, a peaceful mid-verse must escape a stale neon scene.
-    // Sticky morph ≥8–10s — no thrash on aggression blips.
+    // Vibe congruence repair is independent of section boundaries.
+    // HOLD QA-0255: soft pastoral must NOT trap an aggressive ladder —
+    // escape incongruent packs on ESCAPE_MS (~1.2s), then latch STICKY_MS on the win.
     const genreHintLive = audio?.genreHint || 'unknown';
+    const ladderLive = String(vibeDom?.ladder || audio?.vibe?.ladder || resolveLadder(audio) || '').toLowerCase();
+    // Audio contract: forbidPastoral / aggressionLock / ladder / moment → HARD_LOCK (HOLD-0306)
+    const momentLive = readMoment(audio);
+    const aggN = Number(vibeDom?.aggression ?? audio?.vibe?.aggression ?? 0);
+    const genreHard = /metal|rock_metal|industrial|punk/i.test(String(audio?.genreHint || audio?.genreFamily || ''));
+    // HOLD-0338: softClearEarly wins — pinLive never true on Night Owl softClear
+    const pinLive = !softClearEarly && !!(vibeDom?.forbidPastoral || vibeDom?.aggressionLock
+      || vibeDom?.martial || vibeDom?.orchestralMartial || vibeDom?.pinArmed
+      || audio?.vibe?.forbidPastoral || audio?.vibe?.aggressionLock
+      || audio?.vibe?.martial || audio?.vibe?.orchestralMartial || audio?.vibe?.pinArmed
+      || momentLive?.forbidPastoral || momentLive?.aggressionLock
+      || momentLive?.martial || momentLive?.orchestralMartial || momentLive?.pinArmed
+      || ladderLive === 'aggressive');
+    // HOLD-0338 DIAG: Night Owl → metal_hall was martialHeat energy/kick swell
+    // (kick meter false-high on chillhop) + softBedGuard requiring !martialHeat +
+    // early pin clamping before softClear. Gate swell; softClear/softBed win.
+    const energyN = Number(audio?.energy ?? momentLive?.energy ?? 0);
+    const kickN = Number(audio?.roles?.kick ?? audio?.kick ?? momentLive?.kick ?? 0);
+    const bassN = Number(audio?.bass ?? audio?.roles?.bass ?? 0);
+    const dropN = Number(momentLive?.drop ?? 0);
+    const onsetN = Number(momentLive?.onsetFast ?? 0);
+    const harshN = Number(audio?.roles?.harsh ?? audio?.instruments?.harsh ?? momentLive?.harsh ?? 0) || 0;
+    const martialFlag = !!(audio?.vibe?.martial || audio?.vibe?.orchestralMartial
+      || momentLive?.martial || momentLive?.orchestralMartial
+      || vibeDom?.martial || vibeDom?.orchestralMartial);
+    // HOLD-0346: force soft when !martial && !orchMart && energy soft — IGNORE sticky
+    // pinArmed / floored aggression (chicken-egg: pin → agg≥0.78 → softClear never).
+    // Exclude soundtrack/classical so Clash quiet dips do not clear hard latch.
+    const genreFamLive = String(audio?.genreFamily || audio?.genreHint || vibeDom?.genreFamily || '').toLowerCase();
+    const forceSoftClear = !martialFlag && !genreHard && energyN < 0.4
+      && harshN < 0.25
+      && !/soundtrack|classical/.test(genreFamLive);
+
+    // True martial / harsh — NOT soft energy+kick alone (Night Owl bass saturates kick)
+    // HOLD-0346: sticky pinArmed / floored agg MUST NOT count as martialHeat under forceSoft
+    const martialHeatCore = !forceSoftClear && ((
+      (harshN > 0.2 && energyN > 0.32)
+    ) || (Number(audio?.texture?.harshWall) || 0) > 0.35
+      || ((!forceSoftClear) && (Number(audio?.vibe?.aggression) || 0) >= 0.45)
+      || (!!audio?.texture?.fourOnFloor && energyN > 0.55 && harshN > 0.15)
+      || martialFlag
+      || !!(audio?.vibe?.pinArmed || momentLive?.pinArmed || vibeDom?.pinArmed));
+    // HOLD-0321 Clash energy+bass heat — ONLY when not softClear / soft peaceful bed
+    const softClearHint = !!(vibeDom?.softClear || audio?.vibe?.softClear || momentLive?.softClear
+      || softClearEarly || forceSoftClear);
+    const softPeacefulHint = forceSoftClear || (!martialFlag && !genreHard
+      && (ladderLive === 'peaceful' || ladderLive === 'spoken' || vibeDom?.family === 'peaceful'
+        || speechLike || softClearHint)
+      && aggN < 0.45);
+    const martialHeatSwell = !softClearHint && !softPeacefulHint && !forceSoftClear
+      && energyN >= 0.28
+      && (bassN >= 0.25 || kickN >= 0.18 || (Number(momentLive?.kick) || 0) >= 0.18);
+    const martialHeat = martialHeatCore || martialHeatSwell;
+
+    // HOLD-0338/0346: softClear MUST kill nuclear + latch (Night Owl → no metal_hall)
+    // forceSoftClear wins EVEN if pinArmed still true for one frame (agg floor ignored)
+    const softClear = softClearHint || forceSoftClear
+      || (!pinLive && !martialFlag && !genreHard
+        && (ladderLive === 'peaceful' || ladderLive === 'spoken' || vibeDom?.family === 'peaceful'
+          || speechLike)
+        && aggN < 0.45 && energyN < 0.42);
+
+    // Track change → clear hard latch (no bleed Night Owl ← Clash)
+    const trackKey = String(
+      audio?.trackId || audio?.songId || audio?.title || audio?.src || this.plan?.theme || ''
+    );
+    if (trackKey && trackKey !== this._lastTrackKey) {
+      this._hardLatchUntil = 0;
+      this._hotSince = 0;
+      this._packHoldUntil = 0;
+      this._lastTrackKey = trackKey;
+    }
+
+    // HOLD-0321/0338/0346: softBedGuard — !martial/!orchMart soft energy wins.
+    // Stale pinArmed + floored agg MUST NOT defeat soft bed (Night Owl after Clash).
+    const softBedGuard = softClear || forceSoftClear || (!martialFlag && !genreHard
+      && energyN < 0.42 && harshN < 0.25
+      && !/soundtrack|classical/.test(genreFamLive));
+
+    if (softClear || softBedGuard) {
+      this._hardLatchUntil = 0;
+      this._hotSince = 0;
+      // drop hard pack sticky so soft presets can return
+      if (isHardLockPreset(this.currentPreset)) {
+        this._packHoldUntil = 0;
+      }
+    }
+
+    const aggressiveLive = (softClear || softBedGuard) ? false : (
+      pinLive || isAggressiveVibe(audio) || ladderLive === 'aggressive' || ladderLive === 'chaotic'
+      || vibeDom?.family === 'chaotic' || aggN >= 0.55 || genreHard || martialHeat
+    );
+
+    // HOLD-0321/0338 NUCLEAR: energy/kick hot ≥1.5s — NEVER on softClear/softBed
+    const hotNow = !(softClear || softBedGuard) && (
+      energyN >= 0.30 || kickN >= 0.20
+      || (energyN >= 0.22 && bassN >= 0.30)
+      || dropN >= 0.50 || onsetN >= 0.50
+      || (energyN >= 0.26 && harshN >= 0.12)
+    );
+    if (hotNow) {
+      if (!this._hotSince) this._hotSince = now;
+    } else {
+      this._hotSince = 0;
+    }
+    const hotMs = this._hotSince ? Math.max(0, now - this._hotSince) : 0;
+    const hotSustained = hotMs >= 1500;
+    const nuclearHard = !(softClear || softBedGuard) && hotSustained;
+
+    // Latch hard ≥20s after pin/nuclear — softClear/softBed never extends
+    if (!(softClear || softBedGuard) && (pinLive || aggressiveLive || nuclearHard)) {
+      this._hardLatchUntil = Math.max(this._hardLatchUntil || 0, now + PIN_HOLD_MS);
+    }
+    const latchLive = !(softClear || softBedGuard) && now < (this._hardLatchUntil || 0);
+    // HOLD-0338: softClear OR softBedGuard → hardOnly MUST be false
+    const hardOnly = (softClear || softBedGuard)
+      ? false
+      : (pinLive || aggressiveLive || latchLive || nuclearHard);
+
+    const hardHud = {
+      hardOnly: !!hardOnly,
+      pinLive: !!pinLive,
+      aggressiveLive: !!aggressiveLive,
+      latchLive: !!latchLive,
+      nuclearHard: !!nuclearHard,
+      hotSustained: !!hotSustained,
+      hotMs: Math.round(hotMs),
+      martialHeat: !!martialHeat,
+      softBedGuard: !!softBedGuard,
+      softClear: !!softClear,
+      softEnergyBed: !!softEnergyBed,
+      hardLatchUntil: this._hardLatchUntil || 0,
+      hardLatchMsLeft: Math.max(0, Math.round((this._hardLatchUntil || 0) - now)),
+      pinArmed: !!(vibeDom?.pinArmed || audio?.vibe?.pinArmed || momentLive?.pinArmed),
+      martial: !!(vibeDom?.martial || audio?.vibe?.martial || momentLive?.martial),
+      orchestralMartial: !!(vibeDom?.orchestralMartial || audio?.vibe?.orchestralMartial || momentLive?.orchestralMartial),
+      forbidPastoral: (softClear || softBedGuard) ? false
+        : !!(hardOnly || vibeDom?.forbidPastoral || audio?.vibe?.forbidPastoral),
+      aggressionLock: (softClear || softBedGuard) ? false
+        : !!(hardOnly || vibeDom?.aggressionLock || audio?.vibe?.aggressionLock),
+      softRefuse: softForbiddenUnderHard(),
+      hardLockIds: hardLockPresets(),
+      aggN,
+      energy: +energyN.toFixed(3),
+      kick: +kickN.toFixed(3),
+      bass: +bassN.toFixed(3),
+      preset: this.currentPreset || null,
+      packFamily: hardOnly ? 'chaos' : (this.narrative.getPackFamily?.() || null),
+      ladder: hardOnly ? 'aggressive' : (ladderLive || null)
+    };
+    this._hardHud = hardHud;
+    try {
+      if (typeof globalThis !== 'undefined') globalThis.__LS_HARD__ = hardHud;
+    } catch (_) { /* soft */ }
+    // DIAG Path D: NEVER union genreForbidden while hardOnly — classical/folk bans
+    // metal_hall/warzone and kills packLatched. Allowlist owns refuse under pin.
     const vibeForbidden = new Set([
-      ...vibeForbiddenPresets(vibeDom),
-      ...genreForbiddenPresets(genreHintLive)
+      ...vibeForbiddenPresets(hardOnly
+        ? { ...vibeDom, ladder: 'aggressive', family: 'chaotic', forbidPastoral: true, aggressionLock: true, hardOnly: true, nuclearHard: !!nuclearHard }
+        : vibeDom)
     ]);
-    if (vibeForbidden.has(this.currentPreset)) {
-      const repairCandidates = this.variation.avoidRecent(
-        [
-          ...ladderLeadPresets(vibeDom?.ladder || audio?.vibe?.ladder),
-          ...vibeLeadPresets(vibeDom),
-          ...genreLeadPresets(genreHintLive)
-        ], 40000, now
-      );
-      const repairPreset = repairCandidates.find(p => !vibeForbidden.has(p));
-      if (repairPreset && this.variation.canChangeScene(now, 9000)) {
+    if (!hardOnly) {
+      for (const id of genreForbiddenPresets(genreHintLive)) vibeForbidden.add(id);
+    } else {
+      for (const softId of vibeForbiddenPresets({ ladder: 'aggressive', forbidPastoral: true })) {
+        vibeForbidden.add(softId);
+      }
+      // Hard packs are never refuse under pin (strip classical warChaos bleed)
+      for (const id of hardLockPresets()) vibeForbidden.delete(id);
+      if (this.currentPreset && !isHardLockPreset(this.currentPreset)) {
+        vibeForbidden.add(this.currentPreset);
+      }
+    }
+    const outsideHard = hardOnly && this.currentPreset && !isHardLockPreset(this.currentPreset);
+    if (outsideHard || vibeForbidden.has(this.currentPreset)) {
+      const leads = hardOnly
+        ? hardLockPresets()
+        : [
+            ...ladderLeadPresets(ladderLive || vibeDom?.ladder),
+            ...vibeLeadPresets(vibeDom),
+            ...genreLeadPresets(genreHintLive)
+          ];
+      const softAvoid = this.variation.avoidRecent(leads, hardOnly ? 5000 : 25000, now);
+      const pool = (softAvoid.length ? softAvoid : leads)
+        .map(p => this._normalizePreset(p))
+        .filter(p => p && !vibeForbidden.has(p) && (!hardOnly || isHardLockPreset(p)));
+      const repairPreset = pool[0] || (hardOnly ? hardLockPresets()[0] : null);
+      // HOLD-0314: under hardOnly, FORCE escape — canChangeScene must NOT trap forest/deer
+      const canEscape = hardOnly
+        ? !!repairPreset
+        : (repairPreset && this.variation.canChangeScene(now, ESCAPE_MS));
+      if (canEscape && repairPreset) {
         this.variation.recordScene(repairPreset, now);
         this.narrative.rememberScene(repairPreset, secType, time);
+        this.narrative.setPackFamily('chaos');
+        // HOLD-0321: under hardOnly, transition.from MUST be HARD — Continuity paints `from`
+        // first; soft from = forest/deer flash even when to is metal_hall.
+        const hardFrom = hardOnly
+          ? (isHardLockPreset(this.currentPreset) ? this.currentPreset : repairPreset)
+          : this.currentPreset;
         this.transition = {
-          from: this.currentPreset,
+          from: hardFrom,
           to: repairPreset,
           start: now,
-          duration: 1200,
-          mode: 'morph'
+          duration: hardOnly ? 180 : 1200,
+          mode: hardOnly ? 'cut' : 'morph'
         };
-        this.variation.recordTransition('morph', now);
+        this.variation.recordTransition('congruence_escape', now);
         this.currentPreset = repairPreset;
         this._liveSteerPreset = null;
         this._liveSteerUntil = 0;
+        this._packHoldUntil = now + (hardOnly ? PIN_HOLD_MS : STICKY_MS);
+        if (hardOnly && typeof this.narrative.clearSoftCastIdentity === 'function') {
+          try { this.narrative.clearSoftCastIdentity(); } catch (_) { /* soft */ }
+        }
       }
+    }
+    // Absolute refuse: hardOnly never paints soft from/to even mid-morph (HOLD-0321)
+    if (hardOnly) {
+      const h0 = hardLockPresets()[0];
+      if (this.transition) {
+        if (!isHardLockPreset(this.transition.to)) this.transition.to = h0;
+        if (!isHardLockPreset(this.transition.from)) this.transition.from = this.transition.to || h0;
+      }
+      if (this.currentPreset && !isHardLockPreset(this.currentPreset)) {
+        this.currentPreset = h0;
+      }
+      this.narrative.setPackFamily('chaos');
+      // Refuse soft live-steer / imagery-driven soft packs
+      if (this._liveSteerPreset && !isHardLockPreset(this._liveSteerPreset)) {
+        this._liveSteerPreset = null;
+        this._liveSteerUntil = 0;
+      }
+    }
+    // Latch must NOT expire into soft while pin/aggressive still earned (HOLD-0306 ≥20s)
+    if (hardOnly && isHardLockPreset(this.currentPreset)) {
+      this._packHoldUntil = Math.max(this._packHoldUntil || 0, now + PIN_HOLD_MS);
     }
 
     // Quality gap 5 — sticky-lyric expiry on section TYPE or chorus.repeat change.
@@ -1205,33 +1587,71 @@ export class ScenePlanner {
     let preset = this.currentPreset;
     const liveLocked = now < this._liveSteerUntil && this._liveSteerPreset;
 
-    if (liveLocked && !physicalSection) {
+    // Never hold a lyric-steered soft world under aggressive ladder.
+    if (liveLocked && this._liveSteerPreset && vibeForbidden.has(this._liveSteerPreset) && aggressiveLive) {
+      this._liveSteerUntil = 0;
+      this._liveSteerPreset = null;
+    }
+    const packLatched = now < (this._packHoldUntil || 0)
+      && (hardOnly ? isHardLockPreset(this.currentPreset) : !vibeForbidden.has(this.currentPreset));
+
+    if (liveLocked && !physicalSection && this._liveSteerPreset && !vibeForbidden.has(this._liveSteerPreset)) {
       // Lyric world wins until lock expires — cast/prop may still intensify
       preset = this._liveSteerPreset;
       this.currentPreset = preset;
     } else if (sp && sp.preset !== this.currentPreset) {
-      const minGap = physicalSection ? 2800 : STICKY_MS; // continuity ≥8–10s (Worlds repair 9s)
-      if (this.variation.canChangeScene(now, minGap)) {
-        const candidates = this.variation.avoidRecent(
-          [sp.preset, ...(sp.alternatePresets || [])],
-          physicalSection ? 15000 : 40000,
-          now
-        );
-        const ordered = this._orderByContinuity(candidates, this.currentPreset, secType);
-        preset = ordered[0] || sp.preset;
-        this.variation.recordScene(preset, now);
-        this.narrative.rememberScene(preset, secType, time);
-        const hardCut = physicalSection;
-        this.transition = {
-          from: this.currentPreset,
-          to: preset,
-          start: now,
-          duration: hardCut ? 450 : 1800,
-          mode: hardCut ? 'cut' : 'morph'
-        };
-        this.variation.recordTransition(hardCut ? 'hard_cut' : 'morph', now);
-        this.currentPreset = preset;
-        this._liveSteerPreset = null;
+      // Chorus intensifies same movie — but NEVER keep soft pastoral on aggressive.
+      const curFam = familyOfPreset(this.currentPreset) || this.narrative.getPackFamily();
+      const spFam = familyOfPreset(sp.preset);
+      const spOk = sp.preset && !vibeForbidden.has(sp.preset);
+      const chorusHold = (secType === 'chorus' || secType === 'verse' || secType === 'pre')
+        && !physicalSection
+        && !aggressiveLive
+        && !vibeForbidden.has(this.currentPreset)
+        && curFam && spFam && curFam === spFam;
+      if (chorusHold || (packLatched && !physicalSection && spOk === false)) {
+        // Stay on currentPreset — intensity/cast/lighting still rise via roles
+        preset = this.currentPreset;
+      } else if (packLatched && !physicalSection && spOk && familyOfPreset(sp.preset) === curFam) {
+        // Same-family intensify only while latched
+        preset = this.currentPreset;
+      } else if (packLatched && !physicalSection) {
+        // Refuse cross-family / soft morph while aggressive latch holds
+        preset = this.currentPreset;
+      } else {
+        const minGap = physicalSection ? 2800 : STICKY_MS; // coherent hold ≥15s
+        if (this.variation.canChangeScene(now, minGap)) {
+          let candidates = this.variation.avoidRecent(
+            [sp.preset, ...(sp.alternatePresets || [])],
+            physicalSection ? 15000 : 40000,
+            now
+          ).filter(p => !vibeForbidden.has(p));
+          if (!candidates.length && spOk) candidates = [sp.preset];
+          if (hardOnly) {
+            candidates = hardLockPresets().slice();
+          }
+          const ordered = this._orderByContinuity(candidates, this.currentPreset, secType);
+          preset = ordered.find(p => hardOnly ? isHardLockPreset(p) : !vibeForbidden.has(p))
+            || (hardOnly ? hardLockPresets()[0] : null)
+            || this.currentPreset;
+          if (hardOnly && !isHardLockPreset(preset)) preset = this.currentPreset;
+          if (preset !== this.currentPreset) {
+            this.variation.recordScene(preset, now);
+            this.narrative.rememberScene(preset, secType, time);
+            const hardCut = physicalSection;
+            this.transition = {
+              from: this.currentPreset,
+              to: preset,
+              start: now,
+              duration: hardCut ? 450 : 1800,
+              mode: hardCut ? 'cut' : 'morph'
+            };
+            this.variation.recordTransition(hardCut ? 'hard_cut' : 'morph', now);
+            this.currentPreset = preset;
+            this._liveSteerPreset = null;
+            if (hardOnly) this._packHoldUntil = now + PIN_HOLD_MS;
+          }
+        }
       }
     }
 
@@ -1284,6 +1704,23 @@ export class ScenePlanner {
       imagery = `${imagery || ''} — "${activePhrase.text}"`.trim();
     }
 
+    // HOLD-0314/0321 final assert: never emit soft under hard latch
+    if (hardOnly) {
+      const h0 = hardLockPresets()[0];
+      if (!isHardLockPreset(this.currentPreset) || isSoftForbiddenUnderHard(this.currentPreset)) {
+        this.currentPreset = h0;
+        this._liveSteerPreset = null;
+      }
+      if (this.transition) {
+        if (!isHardLockPreset(this.transition.to) || isSoftForbiddenUnderHard(this.transition.to)) {
+          this.transition.to = this.currentPreset || h0;
+        }
+        if (!isHardLockPreset(this.transition.from) || isSoftForbiddenUnderHard(this.transition.from)) {
+          this.transition.from = this.transition.to || this.currentPreset || h0;
+        }
+      }
+      this.narrative.setPackFamily('chaos');
+    }
     preset = this.currentPreset;
 
     let palette = this.plan.palette;
@@ -1319,21 +1756,70 @@ export class ScenePlanner {
     ].slice(0, 4);
     for (const s of symbols) this.narrative.rememberSymbol(s);
 
-    const cast = this._liveCast(sp, secType, chorusRepeat, scaleState.name, vocal, activePhrase, audio, speechSteer, roles, sectionChangeId);
+    let cast = this._liveCast(sp, secType, chorusRepeat, scaleState.name, vocal, activePhrase, audio, speechSteer, roles, sectionChangeId);
+    // HOLD-0321: nuclear scrub — pastoral/moss/fauna impossible under hardOnly
+    if (hardOnly && cast) {
+      ensureCastPresence(cast, {
+        speechLike: false,
+        vibeFamily: 'chaotic',
+        sectionType: secType,
+        ladder: 'aggressive',
+        aggression: Math.max(0.78, aggN || 0),
+        vocalFocus: false,
+        forbidPastoral: true,
+        aggressionLock: true,
+        hardOnly: true,
+        hardLock: true
+      });
+      cast.packFamily = 'chaos';
+    }
     const motifProps = this._liveMotifProps(sp, secType, chorusRepeat, motifMeta);
+
+    // HOLD-0321 emit clamp: preset + previous + transition.from/to ALL HARD when hardOnly
+    let emitPreset = preset;
+    let emitPrev = this.transition?.from || preset;
+    let emitTr = this.transition && now - this.transition.start < this.transition.duration
+      ? {
+          progress: (now - this.transition.start) / this.transition.duration,
+          from: this.transition.from,
+          to: this.transition.to,
+          mode: this.transition.mode || 'morph'
+        }
+      : null;
+    if (hardOnly) {
+      const h0 = hardLockPresets()[0];
+      const hardIds = hardLockPresets();
+      // HOLD-0330: Scene owns id — emitPreset MUST be one of the five HARD_LOCK ids
+      if (!hardIds.includes(emitPreset)) emitPreset = hardIds.includes(this.currentPreset) ? this.currentPreset : h0;
+      if (!hardIds.includes(emitPrev)) emitPrev = emitPreset;
+      if (emitTr) {
+        if (!hardIds.includes(emitTr.to)) emitTr.to = emitPreset;
+        if (!hardIds.includes(emitTr.from)) emitTr.from = emitTr.to || emitPreset;
+      }
+      // Keep sticky clocks ≥20s while hardOnly (id must not expire mid-window)
+      this.currentPreset = emitPreset;
+      this._packHoldUntil = Math.max(this._packHoldUntil || 0, now + PIN_HOLD_MS);
+      this._hardLatchUntil = Math.max(this._hardLatchUntil || 0, now + PIN_HOLD_MS);
+      this.narrative.setPackFamily('chaos');
+      if (this._hardHud) {
+        this._hardHud.preset = emitPreset;
+        this._hardHud.presetOk = hardIds.includes(emitPreset);
+        this._hardHud.hardLockIds = hardIds;
+        this._hardHud.holdMsLeft = Math.max(0, Math.round((this._hardLatchUntil || 0) - now));
+        this._hardHud.packFamily = 'chaos';
+        try { if (typeof globalThis !== 'undefined') globalThis.__LS_HARD__ = this._hardHud; } catch (_) {}
+      }
+      // Scrub soft pastoral imagery labels under hard (Visual owns look; Scene owns id)
+      if (imagery && /forest|deer|meadow|ocean|lake|pastoral|fauna|fish|warm|abstract/i.test(String(imagery))) {
+        imagery = 'hard lock — metal_hall / warzone / fracture';
+      }
+    }
 
     return {
       theme: this.plan.theme,
-      preset,
-      previousPreset: this.transition?.from || preset,
-      transition: this.transition && now - this.transition.start < this.transition.duration
-        ? {
-            progress: (now - this.transition.start) / this.transition.duration,
-            from: this.transition.from,
-            to: this.transition.to,
-            mode: this.transition.mode || 'morph'
-          }
-        : null,
+      preset: emitPreset,
+      previousPreset: emitPrev,
+      transition: emitTr,
       imagery,
       intent: sp?.intent,
       arc: sp?.arc,
@@ -1355,11 +1841,37 @@ export class ScenePlanner {
       liveConceptId: this._liveConcept?.id || null,
       // Vibe routing owns the active family; preset overlaps (meadow/autumn,
       // storm/warzone) must not hide a live peaceful/chaotic assignment.
-      packFamily: this.narrative.getPackFamily() || familyOfPreset(preset),
+      packFamily: hardOnly ? 'chaos' : (this.narrative.getPackFamily() || familyOfPreset(emitPreset)),
+      // HOLD-0321 proof HUD — Works Tester: directive + console __LS_HARD__
+      hardOnly: !!hardOnly,
+      hardLock: !!hardOnly,
+      hardLatchUntil: this._hardLatchUntil || 0,
+      hardLatchMsLeft: Math.max(0, Math.round((this._hardLatchUntil || 0) - now)),
+      pinLive: !!pinLive,
+      martialHeat: !!martialHeat,
+      nuclearHard: !!nuclearHard,
+      pinArmed: !!(vibeDom?.pinArmed || audio?.vibe?.pinArmed || momentLive?.pinArmed),
+      martial: !!(vibeDom?.martial || audio?.vibe?.martial || momentLive?.martial),
+      orchestralMartial: !!(vibeDom?.orchestralMartial || audio?.vibe?.orchestralMartial || momentLive?.orchestralMartial),
+      hardHud: this._hardHud || null,
+      presetOk: !hardOnly || hardLockPresets().includes(emitPreset),
+      hardLockIds: hardLockPresets(),
+
       // Character presence (Worlds placement: sky | mid | foreground)
       cast,
       characters: cast,
-      vibeFamily: vibeDom.family || 'neutral',
+      softClear: !!(softClear || softBedGuard),
+      softBedGuard: !!softBedGuard,
+      vibeFamily: (softClear || softBedGuard) ? (vibeDom.family === 'spoken' || speechLike ? 'spoken' : 'peaceful')
+        : (hardOnly ? 'chaotic'
+          : ((vibeDom.forbidPastoral || vibeDom.aggressionLock || vibeDom.ladder === 'aggressive')
+            ? 'chaotic'
+            : (vibeDom.family || 'neutral'))),
+      // HOLD-0338: soft path never emits forbidPastoral — Visual hardPaint would → metal_hall
+      forbidPastoral: (softClear || softBedGuard) ? false
+        : !!(hardOnly || vibeDom.forbidPastoral || audio?.vibe?.forbidPastoral || moment?.forbidPastoral),
+      aggressionLock: (softClear || softBedGuard) ? false
+        : !!(hardOnly || vibeDom.aggressionLock || audio?.vibe?.aggressionLock || moment?.aggressionLock),
       genreFamily: this.narrative.getGenreFamily?.() || this._lastGenreMeta?.genreFamily || null,
       pleasureIntent: this.narrative.getPleasureIntent?.() || this._lastGenreMeta?.pleasureIntent || null,
       danceIntent: cast?.danceIntent || null,
@@ -1389,6 +1901,7 @@ export class ScenePlanner {
   }
 
   _fallbackDirective(emotion, section, audio, vocal) {
+    const moment = readMoment(audio);
     const roles = this._rolesIntents(audio, vocal);
     const scaleState = this.scale.update(emotion, section, null);
     const secType = section?.type || 'verse';
@@ -1412,14 +1925,19 @@ export class ScenePlanner {
       });
       cast.roleBound = true;
     }
-    const fbVocal = !!((audio?.roles?.vocalish ?? audio?.roles?.lead ?? 0) >= 0.42);
+    const fbVocal = !!(
+      (moment?.vocalish ?? 0) >= 0.38
+      || (audio?.roles?.vocalish ?? audio?.roles?.lead ?? 0) >= 0.42
+    );
     ensureCastPresence(cast, {
       speechLike: !!fbDom.speechLike,
       vibeFamily: fbDom.family || 'neutral',
       sectionType: secType,
       ladder: fbDom.ladder || null,
       aggression: fbDom.aggression ?? audio?.vibe?.aggression ?? 0,
-      vocalFocus: fbVocal
+      vocalFocus: fbVocal,
+      forbidPastoral: !!(fbDom.forbidPastoral || audio?.vibe?.forbidPastoral || moment?.forbidPastoral),
+      aggressionLock: !!(fbDom.aggressionLock || audio?.vibe?.aggressionLock || moment?.aggressionLock)
     });
     if (Array.isArray(cast.members) && cast.members.length) {
       const gFam = getGenreFamily(this.narrative.getGenreFamily?.() || '') || null;
@@ -1428,14 +1946,17 @@ export class ScenePlanner {
         speechLike: !!fbDom.speechLike,
         vibeFamily: fbDom.family || 'neutral',
         danceBias: gFam?.danceBias || (fbDom.speechLike ? 'low' : 'mid'),
-        intensity: 0.45 + (audio?.energy || 0.3) * 0.4,
+        intensity: 0.45 + (typeof moment?.energy === 'number' ? moment.energy : (audio?.energy || 0.3)) * 0.4,
         chorusRepeat: 1,
         afterGate: secType === 'breakdown' || secType === 'drop',
         roles,
         archetype: cast.archetype,
         ladder: fbDom.ladder || null,
         aggression: fbDom.aggression ?? audio?.vibe?.aggression ?? 0,
-        energy: audio?.energy || 0
+        energy: typeof moment?.energy === 'number' ? moment.energy : (audio?.energy || 0),
+        moment,
+        forbidPastoral: !!(fbDom.forbidPastoral || audio?.vibe?.forbidPastoral || moment?.forbidPastoral),
+        aggressionLock: !!(fbDom.aggressionLock || audio?.vibe?.aggressionLock || moment?.aggressionLock)
       });
     }
     return {
@@ -1484,8 +2005,8 @@ export class ScenePlanner {
   }
 
   /**
-   * Live lyric→scene direction: when the active phrase's concept changes,
-   * push scenery toward that concept with continuity morph (not a hard cut).
+   * Live lyric→scene direction: when the active phrase/line advances,
+   * refresh scenic props/motifs promptly (lineChangeId); worldCue stays soft/sticky.
    * Cast/prop intensify allowed under live steer lock without swapping world mid-chorus.
    */
   reactToLyricConcept(concept, now = performance.now(), ctx = {}) {
@@ -1509,27 +2030,86 @@ export class ScenePlanner {
         darkness: concept.mood.darkness ?? 0.4,
         hope: concept.mood.hope ?? 0.3,
         aggression: concept.mood.aggression ?? 0.2,
-        until: now + 9000
+        until: now + STICKY_MS
       };
     }
 
     const secType = ctx.section?.type;
-    if (concept.symbols?.length && (secType === 'verse' || secType === 'pre' || !secType)) {
-      for (const sym of concept.symbols.slice(0, 2)) {
-        this.narrative.establishMotif(sym, secType || 'verse', 0.5);
-        this.narrative.queueCallback(sym, 'chorus', 0.55);
-        this.narrative.rememberSymbol(sym);
+    // Scenic glue from Lyrics Brain: props / motif / glueScore (soft = don't fight planted world)
+    const glue = typeof concept.glueScore === 'number' ? concept.glueScore
+      : (concept.frameOwnership === 'lyric' ? 0.82
+        : concept.frameOwnership === 'instrument' ? 0.35 : 0.55);
+    // Audio+Worlds pin wins over soft lyric worldCue (HOLD / bot1 scenic glue)
+    const audioCtx = ctx.audio || null;
+    const vibePin = this._lastVibeDom || dominantVibe(audioCtx);
+    const aggLyric = Number(vibePin?.aggression ?? audioCtx?.vibe?.aggression ?? 0);
+    const genreHardLyric = /metal|rock_metal|industrial|punk/i.test(String(audioCtx?.genreHint || audioCtx?.genreFamily || ''));
+    const pinOn = !!(vibePin?.forbidPastoral || vibePin?.aggressionLock
+      || vibePin?.martial || vibePin?.orchestralMartial || vibePin?.pinArmed
+      || audioCtx?.vibe?.forbidPastoral || audioCtx?.vibe?.aggressionLock
+      || audioCtx?.vibe?.martial || audioCtx?.vibe?.orchestralMartial || audioCtx?.vibe?.pinArmed
+      || isAggressiveVibe(audioCtx) || vibePin?.ladder === 'aggressive' || vibePin?.family === 'chaotic'
+      || aggLyric >= 0.55 || genreHardLyric);
+    // HOLD-0314: refuse = everything NOT in HARD_LOCK allowlist (forest/deer impossible)
+    const pinForbidden = new Set(pinOn ? [
+      ...vibeForbiddenPresets({ ...vibePin, ladder: 'aggressive', family: 'chaotic', forbidPastoral: true, aggressionLock: true })
+    ] : []);
+    if (pinOn) {
+      for (const id of hardLockPresets()) pinForbidden.delete(id);
+      if (this.currentPreset && !isHardLockPreset(this.currentPreset)) {
+        pinForbidden.add(this.currentPreset);
       }
-      const propIds = propsForConcept(concept, concept.symbols);
-      this.narrative.plantProps(propIds, secType || 'verse');
-      const cast = castFromConcept(concept);
-      this.narrative.establishCast(cast);
     }
 
-    // Pack family hint from concept (don't force mid-chorus world swap)
-    const pack = CONCEPT_PACK[concept.id];
-    if (pack && (secType === 'verse' || secType === 'intro' || !this.narrative.getPackFamily())) {
-      this.narrative.setPackFamily(pack.family);
+    // Line→props RT: plant/reinforce scenic props+motifs on EVERY line advance
+    // (not verse-only). WorldCue / pack family remain soft+sticky below.
+    const motifSyms = (concept.symbols?.length ? concept.symbols : (concept.motif || []));
+    const propIds = propsForConcept(concept, motifSyms);
+    const lineId = ctx.lineChangeId || key;
+    const lineAdvanced = lineId && lineId !== this._lastLineChangeId;
+    if (lineAdvanced) this._lastLineChangeId = lineId;
+
+    if (propIds.length || motifSyms.length) {
+      const plantStrength = 0.35 + 0.45 * Math.max(0, Math.min(1, glue));
+      for (const sym of motifSyms.slice(0, 2)) {
+        this.narrative.establishMotif(sym, secType || 'verse', plantStrength);
+        // Chorus callback queue stays verse/pre (avoid spam); props emit every section
+        if (secType === 'verse' || secType === 'pre' || !secType) {
+          this.narrative.queueCallback(sym, 'chorus', Math.min(0.85, plantStrength + 0.1));
+        }
+        this.narrative.rememberSymbol(sym);
+      }
+      if (propIds.length) {
+        this.narrative.plantProps(propIds, secType || 'verse');
+        this._liveLineProps = propIds.slice(0, 4);
+      } else if (motifSyms.length) {
+        this._liveLineProps = propsForConcept(concept, motifSyms).slice(0, 4);
+      }
+      // Cast establish still prefers verse/pre — NEVER re-stick pastoral under pin (HOLD-0306)
+      if (!pinOn && glue >= 0.4 && (secType === 'verse' || secType === 'pre' || !secType)) {
+        const cast = castFromConcept(concept);
+        this.narrative.establishCast(cast);
+      }
+    } else if (lineAdvanced) {
+      // Line changed but no scenic match — keep prior _liveLineProps (no flash empty)
+    }
+
+    // Pack family: worldCue is a soft hint — never override Audio pin / chaos latch
+    const pack = (concept.worldCue?.family)
+      ? { family: concept.worldCue.family, presets: concept.worldCue.presets || concept.presets || [] }
+      : CONCEPT_PACK[concept.id];
+    const softNatureCue = pack && /^(nature|candy|spoken|neon)$/i.test(String(pack.family || ''));
+    const canHintPack = !pinOn && (secType === 'verse' || secType === 'intro' || !this.narrative.getPackFamily());
+    if (pack && canHintPack && (glue >= 0.45 || !this.narrative.getPackFamily())) {
+      if (!(softNatureCue && glue < 0.45 && this.narrative.getPackFamily())) {
+        this.narrative.setPackFamily(pack.family);
+      }
+    }
+    if (pinOn) {
+      this.narrative.setPackFamily('chaos'); // HOLD-0306: every pin frame, not only soft escape
+      try {
+        if (typeof this.narrative.clearSoftCastIdentity === 'function') this.narrative.clearSoftCastIdentity();
+      } catch (_) { /* soft */ }
     }
 
     if (!conceptChanged) {
@@ -1546,18 +2126,49 @@ export class ScenePlanner {
     if (pack?.presets) {
       rawPresets = [...pack.presets.map(p => this._normalizePreset(p)), ...rawPresets];
     }
-    const presets = [...new Set(rawPresets)].filter(Boolean);
+    let presets = [...new Set(rawPresets)].filter(Boolean);
+    // Soft lyric cues must not teleport to pastoral/neon under aggression pin
+    if (pinOn) {
+      presets = presets.filter(p => isHardLockPreset(p));
+      if (!presets.length) {
+        presets = hardLockPresets().map(p => this._normalizePreset(p));
+      }
+      // Escape soft current immediately — do not wait for concept gap
+      if (this.currentPreset && !isHardLockPreset(this.currentPreset)) {
+        const force = presets[0] || hardLockPresets()[0];
+        this.variation.recordScene(force, now, concept.id);
+        this.narrative.rememberScene(force, 'lyric-pin', now / 1000);
+        this.narrative.setPackFamily('chaos');
+        this.transition = {
+          from: this.currentPreset,
+          to: force,
+          start: now,
+          duration: 280,
+          mode: 'morph'
+        };
+        this.currentPreset = force;
+        this._liveSteerPreset = null;
+        this._liveSteerUntil = 0;
+        this._packHoldUntil = now + PIN_HOLD_MS;
+        return concept;
+      }
+    }
     const target = presets[0];
     if (!target || target === this.currentPreset) {
       return concept;
+    }
+    if (pinOn && !isHardLockPreset(target)) {
+      return concept; // never accept soft lyric target under pin
     }
 
     const physical = secType === 'breakdown' || secType === 'drop';
     const allowed = physical
       ? this.variation.canChangeScene(now, 1800)
       : this.variation.canChangeForConcept(now, concept.id, {
-          sameConceptGap: (this._speechSteer || 0) >= 0.45 ? 6000 : 11000,
-          newConceptGap: (this._speechSteer || 0) >= 0.45 ? 1400 : 2600
+          sameConceptGap: (this._speechSteer || 0) >= 0.45 ? 6000
+            : (typeof concept.glueScore === 'number' && concept.glueScore < 0.45 ? 16000 : 11000),
+          newConceptGap: (this._speechSteer || 0) >= 0.45 ? 1400
+            : (typeof concept.glueScore === 'number' && concept.glueScore < 0.45 ? 4200 : 2600)
         });
 
     if (!allowed) return concept;
@@ -1596,6 +2207,13 @@ export class ScenePlanner {
       return concept;
     }
 
+    if (pinOn && pinForbidden.has(next)) {
+      return concept; // Audio+Worlds pin wins over soft lyric cue
+    }
+    if (!physical && now < (this._packHoldUntil || 0) && !pinForbidden.has(this.currentPreset)) {
+      // Congruent latch — lyric may intensify cast/props only
+      return concept;
+    }
     this.variation.recordScene(next, now, concept.id);
     this.narrative.rememberScene(next, 'lyric', now / 1000);
     this.transition = {

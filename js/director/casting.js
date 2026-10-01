@@ -28,8 +28,8 @@ const semantic = {
 // Fire-and-forget preload
 _loadSemantic();
 
-import { dominantVibe, applyVibeToCast, inferSpeechLikeFromRoles, readVibe } from './vibeCast.js';
-import { resolveLibraryCast, assignRoleIds, applyWeaponBinding } from './castLibrary.js';
+import { dominantVibe, applyVibeToCast, inferSpeechLikeFromRoles, readVibe, readMoment } from './vibeCast.js?v=cohere7';
+import { resolveLibraryCast, assignRoleIds, applyWeaponBinding } from './castLibrary.js?v=cohere7';
 
 /** Concept id → base cast seed (kind/action/placement). Overridden by figureFromConcept when present. */
 const CONCEPT_CAST = {
@@ -198,10 +198,23 @@ export function modulateCast(base, opts = {}) {
       || (typeof speechLikeOpt === 'number' && speechLikeOpt >= 0.45)
       || inferSpeechLikeFromRoles(audio)
   });
-  const speechLike = dom.speechLike || speechSteer >= 0.45;
-  if (speechLike && !dom.speechLike) {
+  // HOLD-0306: pin WINS — never force spoken family over aggression lock
+  const pin = !!(dom.aggressionLock || dom.forbidPastoral
+    || dom.martial || dom.orchestralMartial || dom.pinArmed
+    || dom.ladder === 'aggressive' || dom.family === 'chaotic'
+    || audio?.vibe?.aggressionLock || audio?.vibe?.forbidPastoral
+    || audio?.vibe?.martial || audio?.vibe?.orchestralMartial || audio?.vibe?.pinArmed
+    || readMoment(audio)?.aggressionLock || readMoment(audio)?.forbidPastoral
+    || readMoment(audio)?.martial || readMoment(audio)?.orchestralMartial || readMoment(audio)?.pinArmed);
+  const speechLike = pin ? false : (!!dom.speechLike || speechSteer >= 0.45);
+  if (!pin && speechLike && !dom.speechLike) {
     dom.family = 'spoken';
     dom.speechLike = true;
+  }
+  if (pin) {
+    dom.speechLike = false;
+    if (dom.family === 'spoken' || dom.family === 'peaceful') dom.family = 'chaotic';
+    if (dom.ladder === 'spoken' || dom.ladder === 'peaceful') dom.ladder = 'aggressive';
   }
 
   if (!base || base.kind === 'none') {
@@ -385,6 +398,7 @@ export function modulateCast(base, opts = {}) {
     sectionType,
     intensify,
     allowBeast: dom.family === 'chaotic' || dom.ladder === 'aggressive',
+    moment: readMoment(audio),
     energy: audio?.energy || 0
   });
   // Re-clamp after vibe pass

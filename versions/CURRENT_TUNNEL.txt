@@ -1,3 +1,3 @@
-https://lid-goat-continuous-future.trycloudflare.com
+https://verse-refers-tolerance-villa.trycloudflare.com
 Local: http://127.0.0.1:8765/
-Live SoT: 2026-09-29 ~2:11 PM PT (lid-goat; SIGN-OFF QA-1350 ?v=hold1345-cast)
+Live SoT: 2026-10-01 ~2:51 AM PT (verse-refers; tunnel health restart, http2)

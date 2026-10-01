@@ -1,6 +1,8 @@
 /**
- * Motif props tied to lyric concepts — plant in verse, callback on chorus.
- * Emit motifProps: [{ id, variant, strength, stage }] on directive.
+ * Motif props tied to lyric concepts — plant/reinforce on line advance (RT),
+ * amplify on chorus callback. Emit motifProps: [{ id, variant, strength, stage }].
+ * Prefer concept.props / worldCue / glueScore from Lyrics Brain scenic handoff.
+ * Line→props latency: current-line props lead emission; world family stays sticky.
  * Worlds / Visual Engine draw; Director only emits intents.
  */
 
@@ -36,7 +38,16 @@ const CONCEPT_PROPS = {
   hope_light:        ['beacon', 'lantern'],
   rage:              ['shockwave', 'tear_in_sky', 'handgun_beat', 'riot_baton'],
   home_leaving:      ['doorway', 'rearview_glow'],
-  silence_void:      ['thick_glass', 'mute_halo']
+  silence_void:      ['thick_glass', 'mute_halo'],
+  candy_joy:         ['warm_window', 'lantern', 'beacon'],
+  autumn_leaves:     ['faded_photo', 'lantern'],
+  lone_walker:       ['highway_lines', 'lantern'],
+  crowd_sea:         ['neon_sign', 'umbrella'],
+  meadow_fauna:      ['lantern', 'breath_fog'],
+  misty_lake:        ['lighthouse_beam', 'mist_veil'],
+  dark_sparse:       ['empty_chair', 'lantern'],
+  reality_fracture:  ['fissure', 'tear_in_sky', 'shockwave'],
+  spoken_word_bed:   ['thick_glass', 'beacon']
 };
 
 /** Symbol string → prop id fallback */
@@ -58,7 +69,68 @@ const SYMBOL_PROPS = {
   stars: 'rain_to_stars',
   phoenix: 'phoenix_feather',
   dawn: 'beacon',
-  banner: 'torn_banner'
+  banner: 'torn_banner',
+  shadow_burden: 'shadow_burden',
+  cracked_stone: 'cracked_stone',
+  mirror: 'mirror_shard',
+  doppelganger: 'doppel_trail',
+  shatter: 'fissure',
+  fissure: 'fissure',
+  wave: 'wave_crest',
+  depth: 'lighthouse_beam',
+  skyline: 'neon_sign',
+  tree_silhouette: 'lantern',
+  mist: 'mist_veil',
+  nebula: 'rain_to_stars',
+  cracked_heart: 'cracked_heart',
+  empty_bed: 'empty_chair',
+  hands: 'warm_window',
+  warm_glow: 'warm_window',
+  empty_chair: 'empty_chair',
+  unanswered_glow: 'lantern',
+  faded_photo: 'faded_photo',
+  dust_motes: 'lantern',
+  mask: 'mask',
+  knife_shadow: 'knife_shadow',
+  first_light: 'beacon',
+  melting_clock: 'melting_clock',
+  hourglass: 'hourglass',
+  empty_throne: 'empty_throne',
+  hollow_gold: 'hollow_crown',
+  doorway: 'doorway',
+  wings: 'wings',
+  chains_break: 'broken_chains',
+  wreckage: 'ashes',
+  floating_room: 'floating_door',
+  door: 'floating_door',
+  snowflake: 'breath_fog',
+  breath: 'breath_fog',
+  sparks: 'sparks',
+  gears: 'gear_silhouette',
+  beacon: 'beacon',
+  candy: 'warm_window',
+  smile: 'lantern',
+  leaf: 'faded_photo',
+  amber: 'lantern',
+  shockwave: 'shockwave',
+  crack: 'fissure',
+  rearview: 'rearview_glow',
+  mute: 'mute_halo',
+  thick_glass: 'thick_glass',
+  lone_silhouette: 'highway_lines',
+  single_lamp: 'lantern',
+  crowd_faces: 'neon_sign',
+  blurred_multitude: 'umbrella',
+  meadow: 'lantern',
+  fauna: 'breath_fog',
+  garden: 'lantern',
+  lake: 'lighthouse_beam',
+  isolation: 'empty_chair',
+  darkness: 'lantern',
+  fracture: 'fissure',
+  glitch: 'tear_in_sky',
+  voice: 'thick_glass',
+  horizon: 'beacon'
 };
 
 /**
@@ -76,10 +148,13 @@ export function propsForConcept(concept, extraSymbols = []) {
     ids.push(id);
   };
 
-  if (concept?.id && CONCEPT_PROPS[concept.id]) {
+  // Prefer scenic props exported by Lyrics Brain (semantic.attachScenicFields)
+  if (Array.isArray(concept?.props) && concept.props.length) {
+    for (const p of concept.props) push(p);
+  } else if (concept?.id && CONCEPT_PROPS[concept.id]) {
     for (const p of CONCEPT_PROPS[concept.id]) push(p);
   }
-  const syms = [...(concept?.symbols || []), ...extraSymbols];
+  const syms = [...(concept?.symbols || concept?.motif || []), ...extraSymbols];
   for (const s of syms) {
     push(SYMBOL_PROPS[s] || null);
   }

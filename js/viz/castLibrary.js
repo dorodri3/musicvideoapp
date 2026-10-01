@@ -518,7 +518,11 @@ function _drawStarParticles(ctx, x, bodyTop, bodyH, scale, t, pal) {
  * Never face detail (MUSIC-BRIEF cast-detail).
  */
 function _drawOutfitSilhouetteDiffs(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, look, opacity) {
-  const pal = look.palette || {};
+  let pal = look.palette || {};
+  // Belt: if rim/accent still greenish (missed hard scrub) → warzone ember
+  if (_isGreenishColor(pal.rim) || _isGreenishColor(pal.accent) || _isGreenishColor(pal.fill)) {
+    pal = _forceWarzonePalette(pal);
+  }
   const shape = look.shape || {};
   const acc = look.accessories || [];
   const outfitId = look.outfitId || '';
@@ -530,9 +534,9 @@ function _drawOutfitSilhouetteDiffs(ctx, fx, bodyTop, bodyH, bodyW, lean, scale,
   const hasTrim = acc.includes('trim') || /neon_trim|chrome_candy|stage_gloss|color_block|water_gloss/.test(outfitId);
   const hasHood = acc.includes('hood');
   const hasEmber = acc.includes('ember');
-  const rim = _brightRim(pal.rim || 'rgba(255,230,200,0.7)', 0.78);
-  const accent = pal.accent || rim;
-  const shadow = pal.shadow || pal.fill || 'rgba(8,8,12,0.85)';
+  const rim = _brightRim(pal.rim || 'rgba(255,120,60,0.95)', 0.78);
+  const accent = (_isGreenishColor(pal.accent) ? WARZONE_PALETTE.accent : (pal.accent || rim));
+  const shadow = pal.shadow || pal.fill || 'rgba(6,5,6,0.9)';
 
   // --- CLOAK / CAPE WEDGE (behind-readable drape) ---
   if (hasCloak) {
@@ -712,6 +716,34 @@ function _drawOutfitSilhouetteDiffs(ctx, fx, bodyTop, bodyH, bodyW, lean, scale,
     ctx.fill();
     ctx.restore();
   }
+}
+
+
+/** Warzone/fracture ash-ember-red — kill green / pale soft / pastoral under hardLock. */
+const WARZONE_PALETTE = {
+  fill: 'rgba(6,5,6,0.97)',
+  rim: 'rgba(255,120,60,0.95)',
+  accent: 'rgba(220,40,30,0.85)',
+  shadow: 'rgba(4,3,4,0.75)'
+};
+
+function _isGreenishColor(col) {
+  if (typeof col !== 'string') return false;
+  const m = col.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (!m) return false;
+  const r = +m[1], g = +m[2], b = +m[3];
+  // Green-dominant OR moss/lime pastoral (G high vs R, or G+lime yellow)
+  return (g > r + 15 && g > b + 10) || (g > 100 && g >= r && b < 120 && r < 200);
+}
+
+function _forceWarzonePalette(pal) {
+  const p = pal && typeof pal === 'object' ? { ...pal } : {};
+  // Always force under hard hold — never leave green / pale soft fill
+  p.fill = 'rgba(6,5,6,0.97)';
+  p.rim = 'rgba(255,120,60,0.95)';
+  p.accent = 'rgba(220,40,30,0.85)';
+  p.shadow = 'rgba(4,3,4,0.75)';
+  return p;
 }
 
 function _brightRim(rim, floorA) {
@@ -912,6 +944,10 @@ function _isVocalistLead(opts, look) {
   if (acc.includes('mic_stand') || acc.includes('mic')) return true;
   // stage_gloss lead / FG placement (This Is America FG grammar)
   if (outfitId === 'stage_gloss' && (/foreground|fg|^lead$/.test(placement) || opts?.isLead)) return true;
+  // Characters ON + lead FG cast present → coat/mic wedge must read (QA HOLD B2/B3 blob fix)
+  if (opts?.charactersOn && opts?.isLead && (/foreground|fg/.test(placement) || !placement)) return true;
+  if (opts?.stickyCharacterId && opts?.isLead) return true;
+  if (opts?.hardLock && opts?.isLead) return true;
   return false;
 }
 
@@ -1026,7 +1062,24 @@ function _drawVocalistSilhouette(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, lo
 }
 
 export function drawCastFigure(ctx, opts) {
-  const look = opts.look || resolveCastLook({});
+  let look = opts.look || resolveCastLook({});
+  // Hard lock / sticky hold: strip ALL green/pale/pastoral — ash-ember-red warzone only (QA B2/B3)
+  const hardDraw = !!(opts.hardLock || (opts.aggression || 0) >= 0.55);
+  if (hardDraw) {
+    look = {
+      ...look,
+      style: 'silhouette',
+      fauna: false,
+      palette: _forceWarzonePalette(look.palette),
+      outfitId: /linen_dawn|aisle_linen|moss|pale_void|room_clothes|water_gloss|industrial_hazard/.test(String(look.outfitId || ''))
+        ? (opts.isLead ? 'ember_coat' : 'fracture_rag')
+        : (look.outfitId || 'ember_coat')
+    };
+    // Never draw fauna under hard hold (deer/pastoral soft)
+    if (look.accessories) {
+      look.accessories = look.accessories.filter((a) => a !== 'fauna' && a !== 'hood');
+    }
+  }
   const scale0 = Math.max(0.8, Math.min(48, Number(opts.scale) || 1));
   const sparse = look.sparseScale || 1;
   let scale = scale0 * Math.max(0.85, sparse); // never crush members to dust via sparse
@@ -1121,8 +1174,8 @@ export function drawCastFigure(ctx, opts) {
     return { chestY: baseY - 20 * scale, headY: baseY - 28 * scale, fx, baseY, scale, handY: baseY - 14 * scale, bodyH: 20 * scale };
   }
 
-  // Fauna
-  if (look.fauna || (look.accessories && look.accessories.includes('fauna'))) {
+  // Fauna — refused under hardLock (warzone never deer/soft green)
+  if (!hardDraw && (look.fauna || (look.accessories && look.accessories.includes('fauna')))) {
     _drawFauna(ctx, fx, baseY, scale, look, t, i);
     ctx.restore();
     return { chestY: baseY - 12 * scale, headY: baseY - 22 * scale, fx, baseY, scale, handY: baseY - 8 * scale, bodyH: 14 * scale };
@@ -1224,7 +1277,18 @@ export function drawCastFigure(ctx, opts) {
 
   // Vocalist / FG performer silhouette (mic-stand + raised forearm + open chest)
   if (vocalist && !holdSilent) {
-    _drawVocalistSilhouette(ctx, fx, bodyTop, bodyH, bodyW, lean, scale, look, opacity, t, headY, chestY, baseY);
+    const vocOp = (opts.hardLock || (opts.aggression || 0) >= 0.55)
+      ? Math.max(opacity, 0.96)
+      : opacity;
+    // Hard lock: thicker phone-readable coat/mic wedge (never soft pastoral blob)
+    let vLook = look;
+    if (opts.hardLock && look.palette) {
+      vLook = {
+        ...look,
+        palette: _forceWarzonePalette(look.palette)
+      };
+    }
+    _drawVocalistSilhouette(ctx, fx, bodyTop, bodyH, bodyW * (opts.hardLock ? 1.12 : 1), lean, scale * (opts.hardLock ? 1.04 : 1), vLook, vocOp, t, headY, chestY, baseY);
   }
 
   // Obscure face (dread)
@@ -1494,8 +1558,8 @@ export function drawWeaponProp(ctx, drawn, opts = {}) {
   const baseY = drawn.baseY != null ? drawn.baseY : chestY + 40;
   // Phone-readable prop scale — thicker / larger especially guns for warzone packs
   const packStr = (opts.packId || opts.worldPack || look.packId || opts.world || '').toString().toLowerCase();
-  const warzone = /warzone|fracture|combat|industrial|chaos|ash/.test(packStr + ' ' + arch);
-  const phoneMul = warzone ? 1.35 : 1.2;
+  const warzone = /warzone|fracture|combat|industrial|chaos|ash/.test(packStr + ' ' + arch) || !!opts.hardLock;
+  const phoneMul = warzone ? (opts.hardLock ? 1.65 : 1.35) : 1.2;
   const scale = (drawn.scale || 1) * (opts.scaleMul || 1) * phoneMul;
   const style = (opts.style || look.style || 'silhouette').toString().toLowerCase();
   const handY = drawn.handY != null ? drawn.handY : chestY + 8 * scale;

@@ -279,3 +279,104 @@ v2-scene-20260930-062600-vibe-match — Scene vibe-match: cast bands + sticky 9s
 - Vocalist FG silhouette (mic-stand / open chest / raised forearm) on Scene performer/vocal stamps
 - Stronger phone-readable weapons (rifle/handgun) + scrap_turret / riot_baton; Scene weaponId only
 - Soft-clip unchanged; cache stays ?v=vibe-match1
+MUSIC-BRIEF hard coherence one-fantasy (20261001)
+v2-audio-ladder-hysteresis-20261001-185609 — Audio Pulse: vibe.ladder hysteresis (CEO barely coherent)
+v2-worlds-pre-coherence-hard-20261001-185634 — Worlds: pre-edit coherence-hard (sticky packs ≥12–15s)
+v2-audio-aggression-pin-20261001-185646 — Audio Pulse: sticky aggression pin ≥12–15s (HOLD QA-20261001-0255)
+v2-worlds-coherence-hard-20261001-185706 — Worlds: STICKY_MS 14s; chorus/verse/pre hold same pack family (intensify not thrash); continuity prefers same preset; lyric steer lock = STICKY_MS. Scene paired.
+v2-audio-aggression-floor-20261001-185727 — Audio Pulse: higher martial aggression floor / harder warm drop (HOLD-0255 follow-up)
+v2-worlds-pre-hold-agg-20261001-185756 — Worlds: pre HOLD QA-0255 aggressive packs must win
+v2-worlds-hold-agg-20261001-185802 — Worlds HOLD QA-0255: ESCAPE_MS 1.2s out of soft/neon when incongruent; latch aggressive packs STICKY_MS 14s; chorusHold disabled under aggressive; filter forbidden on section morph. Audio dwell ~2s → Worlds holds imagery.
+
+=== v2-lyrics-scenic-glue-20261001-185641 ===
+Time: 2026-10-01 18:58:17 PT
+Lyrics Brain — CEO coherence-hard: motif words glue INTO the scene (scenic props/world cues).
+Checkpoint: /workspace/light-show-versions/v2-lyrics-scenic-glue-20261001-185641
+Cache: ?v=lyrics-fix2 (css + main module)
+
+Files:
+- js/lyrics/semantic.js — SCENIC_HANDOFF map for all 40 concepts; extractLine/getConcepts/extract
+  now ship props[], worldCue{family,presets}, glueScore, motif[]; garden/rose/bloom → meadow_fauna;
+  mirror patterns fixed (myself/mirror word). Helpers: scenicForConcept, attachScenicFields,
+  glueScoreForOwnership. Ownership: lyric≈0.82 glue (plant hard), instrument≈0.35 (soft, don't fight
+  planted world), either≈0.55.
+- js/director/motifProps.js — prefer concept.props from Lyrics Brain; fill missing CONCEPT_PROPS
+  (candy_joy, autumn_leaves, lone_walker, crowd_sea, meadow_fauna, misty_lake, dark_sparse,
+  reality_fracture, spoken_word_bed); expand SYMBOL_PROPS.
+- js/director/scenePlan.js — reactToLyricConcept consumes worldCue + glueScore (soft pack hint,
+  plant strength, longer gaps when glue low).
+- js/main.js — pass glueScore/worldCue/props on reactToLyricConcept ctx; cache bump only.
+- index.html — ?v=lyrics-fix2
+
+Glue contract (Scene Director / Worlds):
+1. lineConcept.props = prop nominations (umbrella, crown_of_fire, highway_lines, …) — plant as WORLD CUES, not competing stickers.
+2. lineConcept.worldCue.family + presets = soft pack family hint (neon/nature/warzone/…).
+3. lineConcept.glueScore = blend weight; <0.45 → soft (instrument) — keep planted world, still plant props gently.
+4. propsForConcept(concept) prefers concept.props when present.
+5. Do NOT teleport mid-chorus; chorus intensifies same movie (MUSIC-BRIEF coherence-hard).
+
+node --check: semantic.js motifProps.js scenePlan.js main.js OK
+ESM smoke: rain/fire/ocean/night/heart/garden/stars/mirror/war/road → scenic props+worldCue OK
+
+v2-worlds-forbid-pastoral-20261001-185826 — Worlds: honor audio.vibe.forbidPastoral + aggressionLock (pinLive); latch hard packs; expose flags on directive. Builds on hold-agg-185802.
+v2-audio-realtime-now-20261001-185857 — Audio Pulse: realtime NOW — fast escalate / sticky hold (CEO HOLD-0255)
+v2-worlds-lyric-pin-20261001-185908 — Worlds: lyric worldCue/glueScore soft only; forbidPastoral/aggressionLock pin wins (no pastoral morph from soft cues).
+2026-10-01 18:59 PT — Scene v2-scene-20261001-185929-coherence-hard: coherence-hard + HOLD-0255 aggressionLock/forbidPastoral cast+pack pin
+2026-10-01 03:02 PDT — v2-scene-20261001-190216-realtime-moment: Scene realtime moment routing — readMoment precedence, moment vocal/energy/drop/onsetFast cast hits, pin flags into ensureCastPresence, STICKY_MS=15000; HOLD-0255 pastoral/worldCue gates kept.
+v2-audio-pin-hard-20s-20261001-190732 — Audio Pulse: hard pin ≥20s, aggression never drops while lock (HOLD QA-0306)
+v2-worlds-pre-hold-0306-20261001-190802 — pre HOLD-0306 hard-lock allowlist ≥20s
+v2-worlds-hold-0306-hardlock-20261001-190808 — HOLD-0306: while pin/aggressive ONLY metal_hall|reality_fracture|apocalyptic_warzone|red_void|storm; PIN_HOLD_MS 20s continuous latch (no expire into soft/copper).
+v2-scene-20261001-190924-hold-0306
+v2-audio-softbed-martial-20261001-190934 — Audio Pulse: never clear pin on classical while martial (DIAG HOLD-0306)
+v2-worlds-diag-genreforbid-20261001-190947 — DIAG HOLD-0306 Path D: under hardOnly/pin skip genreForbiddenPresets (classical no longer bans HARD_LOCK); packLatched uses isHardLockPreset; strip hard IDs from refuse.
+v2-audio-softbed-martial-20261001-191022 — Audio Pulse: CONFIRMED softImmersion — classical never clears pin (reconcile LATEST)
+v2-scene-20261001-191045-hold-0306-pinwins
+
+## Visual v2-visual-morph-hard-20261001-191111
+- Path F morph soft-win: skip soft to under hardLock; storm veil α≥0.45; hardLook live directive/moment; peace bloom refuse; cache ?v=cohere2
+v2-audio-orchestral-martial-20261001-191501 — Audio Pulse: orchestral-martial pin arms (QA-0314 Clash Defiant)
+v2-audio-orchestral-martial-20261001-191530 — orchestral-martial pin + Night-Owl-only softClear (QA-0314)
+v2-scene-20261001-191558-hold-0314-refuse-soft
+v2-worlds-hold-0314-hardgate-20261001-191607 — HOLD-0314: hardLatch 20s afterglow; reseed sectionPlans→HARD_LOCK on pin; force metal_hall|reality_fracture|apocalyptic_warzone|red_void|storm; martialHeat latch without Audio pin; final assert no forest/deer.
+v2-audio-orchestral-martial-20261001-191530 — Audio: orchestral-martial pin + Night-Owl-only softClear (QA-0314)
+v2-scene-20261001-191653-hold-0314-martial-consume — Scene: consume martial/orchestralMartial/pinArmed; hardOnly latch; refuse soft under pin
+v2-worlds-20261001-191653-hold-0314-forbid-soft — Worlds/vibeCast: martial proof fields → pin; soft pastoral forbidden under hardOnly
+DIAG-HOLD-0314-soft-still.md — root cause ambient softImmersion; cache ?v=cohere3
+v2-audio-pin-proof-fields-20261001-192208 — Audio Pulse: pin proof fields vibe→moment no-drop (QA-0321)
+v2-scene-20261001-192254-hold-0321-nuclear-hot
+v2-audio-soundtrack-martial-proof-20261001-192336 — Audio Pulse: Clash ID3 Soundtrack + ambient kick-crush blocked orchestralMartial; pin proof on frame root + __LS_AUDIO_PIN__ (QA-0321)
+
+2026-10-01 03:24 PT — v2-worlds-hold-0321-20261001-192443 — Worlds HOLD-0321 hardgate (QA-0321 forest/deer on Clash):
+- Root: Continuity paints transition.from first; escape morph left soft forest/ocean as from → deer/fish flash; hardOnly lagged when martialHeat needed harsh; emit previousPreset soft.
+- vibeCast: SOFT_FORBIDDEN_UNDER_HARD list; martial/pinArmed/hardOnly → aggressive refuse.
+- scenePlan: widen martialHeat (orchestralMartial + energy/bass); softBedGuard never blocks martial; escape/pin transition.from HARD; absolute refuse from+to; emit clamp preset/previous/transition all HARD_LOCK; proof fields hardOnly/hardLatchUntil/pin/martial* + hardHud → __LS_HARD__.
+- presets: drawPreset sets _forbidPastoralFauna; forest/ocean/meadow/misty_lake redirect to metal_hall/storm under hard; faunaSilhouette no-op.
+- renderer state stamps forbidPastoral/hardOnly; main+controls proof HUD on ?v=cohere4|?debug=hardlock; css .hud-proof; index ?v=cohere4.
+- HARD_LOCK: metal_hall|reality_fracture|apocalyptic_warzone|red_void|storm; PIN_HOLD_MS=20000.
+- Night Owl soft path unchanged when !hardOnly. Do NOT git push.
+- Pre-ckpt: v2-worlds-pre-hold-0321-20261001-192221
+v2-scene-20261001-193154-hold-0330-hard-id-sticky
+
+2026-10-01 19:35 PT — v2-visual-hold-0330-hardlook-20261001-193513 — Visual HOLD-0330 hardlook + HUD cohere5:
+- Root HUD TypeError: call to this._drawDebugHud without bound/module fallback (prototype race / missing method during concurrent HOLD-0321 land).
+- Bulletproof: module drawDebugHudImpl + constructor bind + try/catch + fillText fallback; default ON, ?debug=0 off.
+- HARD_LOCK paint distinct: metal_hall cold steel/cyan; warzone ash+ember crimson; fracture violet/cyan shards; red_void harsh crimson; storm lightning+rain.
+- drawPreset hardPaint forces HARD_LOCK ids + cold contrast veil; scenic travel / vibe hooks / lighting mute warm orange under hardOnly.
+- Soft Night Owl/misty_lake warm PASS preserved when unlocked. Soft-clip untouched. Path F untouched.
+v2-scene-20261001-193938-hold-0338-softclear-latch
+v2-audio-softclear-kickfalse-20261001-194000 — Audio Pulse: softClear wins on peaceful despite kick=1; cap ambient kick when !cinematicBed (QA-0338 / cohere6)
+
+## 2026-10-01 HOLD-0338 softClear (?v=cohere6)
+- Audio softClear ignores false kick; energy modest <0.42
+- Worlds refuse HARD_LOCK under softClear
+- Scene softclear-latch peer; Generate resets pin
+- HUD drawDebugHudImpl-only
+
+2026-10-01 03:42 PT — v2-worlds-20261001-034206-hold-0338-softclear — Worlds HOLD-0338 softClear wins (!hardOnly):
+- Root: early pin forced metal_hall before softClear; martialHeat kick-swell defeated softBedGuard; emit forbidPastoral leaked → Visual hardPaint→metal_hall; dominantVibe dropped softClear.
+- scenePlan: softClearEarly before pin; gate pinLive/early FORCE; martialHeat core vs swell; softClear|softBedGuard→hardOnly false + clear latch; emit softClear/forbidPastoral false.
+- vibeCast: softClear wins dominantVibe/applyVibeToCast; softClear→peaceful forbid.
+- presets: softClearPaint never redirects to metal_hall.
+- Clash HOLD-0321 intact (martial/orchMartial/true pin → HARD_LOCK). Cache ?v=cohere6. Do NOT git push.
+- Pre-ckpt: v2-worlds-pre-hold-0338-20261001-034039
+v2-audio-softclear-no-sticky-agg-20261001-194823 — Audio Pulse: softClear ignores sticky aggression/densFast/kick; clears pin (HOLD-0346 / cohere7)

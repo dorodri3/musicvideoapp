@@ -190,3 +190,62 @@ Soft bias: spoken / ambient / silence keep aggression low. Rock/noise families d
 | spoken | speechLike clamps win |
 
 Anti (Audio side): soft folk/ambient never leave aggression high enough to invite warzone; metal/rock deepen aggression so neon meadow is not the signal.
+
+## Ladder hysteresis (CEO: barely coherent)
+
+`vibe.ladder` is **sticky** for Scene:
+- Min dwell ~1.8s on current rung
+- Candidate must win ~0.9–1.2s with score margin before switch
+- Harder to drop aggression than to escalate into it
+- Axis envelopes (aggression/chaos/warm/…) use longer lerp windows (~0.7–1.2s)
+
+Prefer `vibe.ladder` over frame-to-frame `dominant` for pack/cast routing.
+
+## Aggression pin (HOLD QA-20261001-0255 · QA-0306)
+
+When martial / harsh+energy storm is earned:
+
+| Field | Contract for Scene / Worlds |
+|-------|------------------------------|
+| `vibe.ladder` | Sticky `aggressive` ≥ **20s** once pinned |
+| `vibe.aggressionLock` | `true` while pin active |
+| `vibe.forbidPastoral` | `true` for whole pin — **ban** pastoral/soft packs |
+| `vibe.aggression` | **Never drops** while locked (held floor ≥ ~0.78) |
+| `vibe.warm` | **0** while locked — no pale/copper soft afterglow |
+
+Soft/spoken/ambient clear the pin (Night Owl must stay soft).
+
+## Realtime NOW (CEO: understand the song *now*)
+
+| Signal | Use |
+|--------|-----|
+| `frame.moment` / `vibe.moment` | Live kick/snare/vocalish/drop/build/onsetFast + lock — **prefer for hit timing** |
+| `roles.kick/snare/vocalish` | Already fast attack envelopes |
+| Aggression escalate | Fast attack (≈0.65/frame up); slow release; ladder escalates to `aggressive` with **0 dwell** |
+| Sticky hold | Once aggressive / `aggressionLock`, pin ≥15s; warm crushed |
+
+Don’t wait on slow vibe axes for a drop — use `moment.drop` / `moment.onsetFast` + `aggressionLock`.
+
+## softBed / classical (DIAG-HOLD-0306 Path A)
+
+`classical` / `gospel` / `jazz` **genre labels do NOT clear** `aggressionLock`.
+Clash Defiant is orchestral-martial often tagged classical — pin stays.
+
+Only **softImmersion** clears the pin: spoken, ambient texture, or sparse+quiet acoustic (Night Owl).
+Martial/storm still fires under classical labels.
+
+## Orchestral-martial pin (QA-20261001-0314)
+
+Clash Defiant is classical-tagged + high energy — pin must arm without metal harsh.
+
+| Signal | Behavior |
+|--------|----------|
+| `vibe.orchestralMartial` | classical/gospel/jazz/swell + energy + kick/onset/bass |
+| `vibe.martial` / `storm` | arms pin (≥20s) — **not** gated by ambient pads |
+| `vibe.softClear` | **Night Owl only**: low energy + low harsh + calm bed |
+| `vibe.pinArmed` / `aggressionLock` / `hardOnly` | proof fields for QA (also on `moment` + frame root) |
+| `vibe.martial` / `orchestralMartial` / `softClear` | martial heat; Soundtrack ID3 counts as orchestral bed |
+| softClear (QA-0338) | peaceful/ambient/low-energy wins even if kick meter false-high; Night Owl must not pin |
+| `globalThis.__LS_AUDIO_PIN__` | live console proof object when analyzer runs |
+
+Ambient pads alone never softClear and never block martial.

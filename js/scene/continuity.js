@@ -2,8 +2,21 @@
  * Morph / match continuity between scenes —
  * forest→silhouette trees→skyscrapers→stars — not random jumps.
  * Prefer morph overlays; hard cuts are director's job for breakdown/drop.
+ *
+ * Path F (DIAG HOLD-0306): under hardLock / refuseSoftWin, soft destination
+ * must NOT paint at full opacity mid-morph (pale B3). Keep hard from + dense
+ * storm veil α≥0.45; soft Night Owl morph untouched when unlocked.
  */
-import { drawPreset } from './presets.js';
+import { drawPreset } from './presets.js?v=cohere7';
+
+/** Congruent with Worlds HARD_LOCK_PRESETS — Visual morph allowlist under pin */
+const HARD_LOCK_IDS = new Set([
+  'metal_hall', 'reality_fracture', 'apocalyptic_warzone', 'red_void', 'storm'
+]);
+
+function isHardLockPreset(id) {
+  return HARD_LOCK_IDS.has(String(id || '').toLowerCase());
+}
 
 export class ContinuityEngine {
   constructor() {
@@ -34,8 +47,10 @@ export class ContinuityEngine {
       return;
     }
 
-    // Hard cut: skip morph bridge
-    if (transition.mode === 'cut') {
+    // Hard cut: skip morph bridge — BUT refuse unearned cuts when forceMorph stamped (Visual coherence)
+    if (transition.forceMorph) {
+      /* fall through to morph path below */
+    } else if (transition.mode === 'cut') {
       const p = transition.progress;
       if (p < 0.15) {
         drawPreset(transition.from, ctx, w, h, { ...state, preset: transition.from });
@@ -45,12 +60,18 @@ export class ContinuityEngine {
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, w, h);
       } else {
-        drawPreset(transition.to, ctx, w, h, { ...state, preset: transition.to });
+        // Under hardLock, never reveal soft cut destination mid-window
+        const hardGate = !!(transition.hardLock || transition.refuseSoftWin);
+        const toId = (hardGate && !isHardLockPreset(transition.to))
+          ? (isHardLockPreset(transition.from) ? transition.from : 'metal_hall')
+          : transition.to;
+        drawPreset(toId, ctx, w, h, { ...state, preset: toId });
         const fade = 1 - (p - 0.35) / 0.65;
         if (fade > 0) {
           ctx.fillStyle = `rgba(0,0,0,${fade * 0.85})`;
           ctx.fillRect(0, 0, w, h);
         }
+        if (hardGate) this._stormVeil(ctx, w, h, Math.max(0.45, fade * 0.5 + 0.35));
       }
       return;
     }
@@ -58,8 +79,43 @@ export class ContinuityEngine {
     const p = this._ease(transition.progress);
     this._ensureBuffer(w, h);
 
+    const hardGate = !!(transition.hardLock || transition.refuseSoftWin);
+    const softDest = hardGate && !isHardLockPreset(transition.to);
+
+    // Always paint hard `from` first
     this.bufCtx.clearRect(0, 0, w, h);
     drawPreset(transition.from, this.bufCtx, w, h, { ...state, preset: transition.from });
+
+    if (softDest) {
+      // Path F strongest: skip soft `to` entirely mid-morph.
+      // Keep hard `from` full + dense storm veil α≥0.45 (no pale/green B3).
+      // Late window (p>0.85): optional hard-fallback bleed ≤0.15 — never soft preset.
+      ctx.globalAlpha = 1;
+      ctx.drawImage(this.buffer, 0, 0);
+
+      if (p > 0.85) {
+        const fallback = isHardLockPreset(transition.from)
+          ? transition.from
+          : 'metal_hall';
+        this.bufCtx.clearRect(0, 0, w, h);
+        drawPreset(fallback, this.bufCtx, w, h, { ...state, preset: fallback });
+        const lateA = Math.min(0.15, ((p - 0.85) / 0.15) * 0.15);
+        ctx.save();
+        ctx.globalAlpha = lateA;
+        ctx.drawImage(this.buffer, 0, 0);
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+
+      if (p > 0.25 && p < 0.75) {
+        this._bridgeOverlay(ctx, w, h, transition.from, 'metal_hall', p, state);
+      }
+      // Dense storm veil — floor 0.45 under hardLock (was ~0.18)
+      this._stormVeil(ctx, w, h, Math.max(0.45, (1 - Math.abs(p - 0.5) * 1.0) * 0.62));
+      return;
+    }
+
+    // Unlocked soft morph OR hard→hard: normal crossfade
     ctx.globalAlpha = 1 - p;
     ctx.drawImage(this.buffer, 0, 0);
 
@@ -75,9 +131,21 @@ export class ContinuityEngine {
     ctx.restore();
     ctx.globalAlpha = 1;
 
-    if (p > 0.3 && p < 0.7) {
+    if (p > 0.25 && p < 0.75) {
       this._bridgeOverlay(ctx, w, h, transition.from, transition.to, p, state);
     }
+    // Mid-aggression hard→hard: still densify storm veil (was ~0.18)
+    if (hardGate) {
+      this._stormVeil(ctx, w, h, Math.max(0.45, (1 - Math.abs(p - 0.5) * 1.0) * 0.62));
+    }
+  }
+
+  /** Ash-ember storm veil — α floored for hardLock soft-win refuse */
+  _stormVeil(ctx, w, h, alpha) {
+    const a = Math.min(0.72, Math.max(0, alpha));
+    if (a < 0.02) return;
+    ctx.fillStyle = `rgba(40,8,10,${a})`;
+    ctx.fillRect(0, 0, w, h);
   }
 
   _ease(t) {

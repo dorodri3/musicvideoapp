@@ -252,8 +252,17 @@ function motifMarks(ctx, w, h, state, opts = {}) {
 
 
 
-/** Stylized soft fauna silhouettes (deer / bird / fish / herd) — not photoreal. */
+/** When true, skip pastoral fauna (deer/fish/herd/bird) — set by drawPreset under hard. */
+let _forbidPastoralFauna = false;
+
+/** Stylized soft fauna silhouettes (deer / bird / fish / herd) — not photoreal.
+ * HOLD-0321: under hardLock / forbidPastoral / hardOnly NEVER paint pastoral fauna.
+ */
 function faunaSilhouette(ctx, x, y, kind, scale = 1, color = 'rgba(0,0,0,0.55)') {
+  if (_forbidPastoralFauna) return;
+  if (kind === 'deer' || kind === 'fish' || kind === 'herd') {
+    /* gated above — kept for clarity */
+  }
   ctx.save();
   ctx.fillStyle = color;
   ctx.translate(x, y);
@@ -533,41 +542,80 @@ export const PRESETS = {
     figureStage(ctx, w, h, state, { groundY: h * 0.7, band: false, color: 'rgba(200,210,255,0.45)', pose: 'float', bodyH: 32 });
   },
 
+  /** HOLD-0330: cold lightning / slate storm — NEVER cozy warm stage */
   storm(ctx, w, h, state) {
     const { t, audio, intensity, emotion } = state;
-    fillSky(ctx, w, h, '#0a0c12', '#1a2030', '#12151c');
-    // clouds
-    ctx.fillStyle = 'rgba(30,35,45,0.7)';
-    for (let i = 0; i < 6; i++) {
-      const x = ((i * 180 + t * 30) % (w + 200)) - 100;
+    // HOLD-0330: cold thunder palette — dark steel/blue, NOT warm stage
+    fillSky(ctx, w, h, '#050810', '#0c1420', '#080c14');
+    // thunderheads — cold blue-grey (deterministic, no Math.random wash)
+    ctx.fillStyle = 'rgba(18,28,42,0.82)';
+    for (let i = 0; i < 7; i++) {
+      const x = ((i * 167 + t * 28) % (w + 220)) - 110;
       ctx.beginPath();
-      ctx.ellipse(x, h * 0.25 + (i % 3) * 30, 120, 40, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, h * 0.18 + (i % 3) * 22, 110 + (i % 4) * 12, 36 + (i % 3) * 6, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-    silhouettes(ctx, w, h, h * 0.72, 20, 40, '#080a10'); // jagged locked — bass ≠ silhouette height
-    // lightning
-    if (audio.onset > 0.5 || audio.bass > 0.65 || (state.events && state.events.includes('sky_tear'))) {
-      const boltA = 0.7 + audio.onset * 0.3 + audio.bass * 0.25;
-      ctx.strokeStyle = `rgba(200,220,255,${boltA})`;
-      ctx.lineWidth = 2 + audio.onset * 3 + audio.bass * 2;
-      const lx = w * (0.3 + Math.random() * 0.4);
-      ctx.beginPath();
-      ctx.moveTo(lx, 0);
-      let y = 0;
-      while (y < h * 0.7) {
-        y += 20 + Math.random() * 30;
-        ctx.lineTo(lx + (Math.random() - 0.5) * 60, y);
+    silhouettes(ctx, w, h, h * 0.72, 20, 40, '#04060c');
+    // lightning bolts — cold blue-white flashes (kick/onset/bass)
+    const boltTrig = (audio.onset || 0) > 0.35 || (audio.bass || 0) > 0.55
+      || (state.events && state.events.includes('sky_tear'))
+      || ((Math.sin(t * 7.3) * 0.5 + 0.5) > 0.82 && (audio.energy || 0) > 0.4);
+    if (boltTrig) {
+      const boltA = 0.55 + (audio.onset || 0) * 0.35 + (audio.bass || 0) * 0.2;
+      const seed = Math.floor(t * 4) * 17;
+      for (let b = 0; b < 2; b++) {
+        const lx = w * (0.22 + ((seed + b * 41) % 55) / 100);
+        ctx.strokeStyle = `rgba(190,220,255,${boltA})`;
+        ctx.lineWidth = 2.5 + (audio.onset || 0) * 2.5;
+        ctx.shadowColor = 'rgba(160,200,255,0.85)';
+        ctx.shadowBlur = 14;
+        ctx.beginPath();
+        ctx.moveTo(lx, 0);
+        let y = 0;
+        let x = lx;
+        let step = 0;
+        while (y < h * 0.72 && step < 14) {
+          step++;
+          y += 28 + ((seed + step * 13 + b) % 22);
+          x += (((seed + step * 7 + b * 3) % 70) - 35);
+          ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        // fork
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(lx + (x - lx) * 0.45, h * 0.32);
+        ctx.lineTo(lx + (x - lx) * 0.45 + 40, h * 0.48);
+        ctx.stroke();
       }
-      ctx.stroke();
-      ctx.fillStyle = `rgba(200,220,255,${0.1 + audio.onset * 0.2})`;
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = `rgba(180,210,255,${0.08 + (audio.onset || 0) * 0.18})`;
       ctx.fillRect(0, 0, w, h);
     }
+    // rain streaks — cold blue-white
+    ctx.save();
+    ctx.strokeStyle = `rgba(160,190,230,${0.18 + intensity * 0.22})`;
+    ctx.lineWidth = 1;
+    const rainN = Math.floor(40 + intensity * 50);
+    for (let i = 0; i < rainN; i++) {
+      const rx = ((i * 97 + t * 380) % (w + 40)) - 20;
+      const ry = ((i * 53 + t * 520) % (h + 60)) - 30;
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - 4, ry + 18 + (i % 5));
+      ctx.stroke();
+    }
+    ctx.restore();
     atmosParticles(ctx, w, h, t, audio, 'rain', intensity);
-    motifMarks(ctx, w, h, state, { midY: h * 0.65 });
-    figureStage(ctx, w, h, state, { groundY: h * 0.8, bandH: h * 0.15, color: 'rgba(0,0,0,0.9)', pose: 'stand', bandColor: 'rgba(4,6,10,0.5)', bandJagged: 6 });
+    motifMarks(ctx, w, h, state, { midY: h * 0.65, color: 'rgba(140,180,230,0.28)', stroke: 'rgba(180,210,255,0.22)' });
+    figureStage(ctx, w, h, state, {
+      groundY: h * 0.8, bandH: h * 0.15, color: 'rgba(0,0,0,0.92)', pose: 'stand',
+      bandColor: 'rgba(8,12,22,0.65)', bandJagged: 8
+    });
   },
 
   ocean(ctx, w, h, state) {
+    if (_forbidPastoralFauna) return PRESETS.storm(ctx, w, h, state);
     const { t, audio, intensity, emotion } = state;
     fillSky(ctx, w, h, '#061018', '#0a2838', '#0a2030');
     // moon
@@ -611,6 +659,7 @@ export const PRESETS = {
   },
 
   forest(ctx, w, h, state) {
+    if (_forbidPastoralFauna) return PRESETS.metal_hall(ctx, w, h, state);
     const { t, audio, intensity, emotion } = state;
     fillSky(ctx, w, h, '#0a1208', '#142018', '#0c180c');
     // mist
@@ -875,30 +924,51 @@ export const PRESETS = {
     atmosParticles(ctx, w, h, t, audio, 'dust', intensity * 0.3);
   },
 
+  /** HOLD-0330: deep crimson void — NOT brown bands / warm stage */
   red_void(ctx, w, h, state) {
     const { t, audio, emotion, intensity } = state;
-    const pulse = 0.5 + Math.sin(t * (2 + emotion.aggression * 3)) * 0.2 + audio.bass * 0.3;
-    ctx.fillStyle = `rgb(${Math.floor(40 + pulse * 80)},0,${Math.floor(8 + pulse * 10)})`;
+    // HOLD-0330: deep crimson void — harsh sparse geometry, NOT soft orange wash
+    const pulse = 0.45 + Math.sin(t * (1.6 + (emotion.aggression || 0) * 2.2)) * 0.15 + (audio.bass || 0) * 0.25;
+    ctx.fillStyle = `rgb(${Math.floor(18 + pulse * 28)},0,${Math.floor(4 + pulse * 6)})`;
     ctx.fillRect(0, 0, w, h);
-    const g = ctx.createRadialGradient(w * 0.5, h * 0.5, 20, w * 0.5, h * 0.5, w * 0.6);
-    g.addColorStop(0, `rgba(255,40,40,${0.3 + audio.onset * 0.4})`);
-    g.addColorStop(0.5, `rgba(120,0,20,${0.4})`);
-    g.addColorStop(1, 'rgba(10,0,0,0.9)');
+    const g = ctx.createRadialGradient(w * 0.5, h * 0.48, 12, w * 0.5, h * 0.48, w * 0.72);
+    g.addColorStop(0, `rgba(160,8,18,${0.35 + (audio.onset || 0) * 0.25})`);
+    g.addColorStop(0.45, `rgba(70,0,10,${0.55})`);
+    g.addColorStop(1, 'rgba(4,0,0,0.97)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
-    // shockwave rings
-    if (audio.onset > 0.4 || emotion.aggression > 0.7) {
-      ctx.strokeStyle = `rgba(255,200,200,${0.2 + audio.onset * 0.5})`;
-      ctx.lineWidth = 3;
-      const r = (t * 120 + audio.onset * 200) % (w * 0.7);
+    // sparse harsh geometry — thin crimson planes (not soft ovals)
+    ctx.save();
+    ctx.strokeStyle = `rgba(220,40,50,${0.22 + (emotion.aggression || 0) * 0.25})`;
+    ctx.lineWidth = 2;
+    const planes = [
+      [0.12, 0.22, 0.28, 0.08], [0.55, 0.18, 0.32, 0.06],
+      [0.2, 0.55, 0.18, 0.14], [0.62, 0.58, 0.22, 0.1]
+    ];
+    for (const [px, py, pw, ph] of planes) {
+      ctx.strokeRect(w * px, h * py, w * pw, h * ph);
+      ctx.fillStyle = `rgba(90,0,12,${0.18 + pulse * 0.12})`;
+      ctx.fillRect(w * px, h * py, w * pw, h * ph);
+    }
+    // single blood-red vertical slash
+    ctx.fillStyle = `rgba(180,10,25,${0.2 + (audio.bass || 0) * 0.25})`;
+    ctx.fillRect(w * 0.48, h * 0.1, 3 + (audio.onset || 0) * 4, h * 0.7);
+    ctx.restore();
+    if ((audio.onset || 0) > 0.4 || (emotion.aggression || 0) > 0.7) {
+      ctx.strokeStyle = `rgba(255,80,90,${0.18 + (audio.onset || 0) * 0.35})`;
+      ctx.lineWidth = 2;
+      const r = ((t * 100 + (audio.onset || 0) * 160) % (w * 0.65));
       ctx.beginPath();
       ctx.arc(w * 0.5, h * 0.5, r, 0, Math.PI * 2);
       ctx.stroke();
     }
-    atmosParticles(ctx, w, h, t, audio, 'embers', intensity);
-    typePlane(ctx, w, h, { x: w * 0.35, y: h * 0.28, w: w * 0.3, h: h * 0.1, alpha: 0.12, fill: 'rgba(255,80,60,0.12)' });
-    motifMarks(ctx, w, h, state, { midY: h * 0.55, color: 'rgba(255,120,80,0.3)' });
-    figureStage(ctx, w, h, state, { groundY: h * 0.78, bandH: h * 0.14, color: 'rgba(10,0,0,0.75)', pose: 'stand', bandColor: 'rgba(40,0,0,0.4)', bandJagged: 5 });
+    atmosParticles(ctx, w, h, t, audio, 'embers', intensity * 0.7);
+    typePlane(ctx, w, h, { x: w * 0.35, y: h * 0.28, w: w * 0.3, h: h * 0.1, alpha: 0.1, fill: 'rgba(180,20,30,0.1)' });
+    motifMarks(ctx, w, h, state, { midY: h * 0.55, color: 'rgba(200,30,40,0.28)', stroke: 'rgba(255,60,70,0.2)' });
+    figureStage(ctx, w, h, state, {
+      groundY: h * 0.78, bandH: h * 0.14, color: 'rgba(8,0,0,0.85)', pose: 'stand',
+      bandColor: 'rgba(40,0,8,0.5)', bandJagged: 6
+    });
   },
 
 
@@ -934,26 +1004,30 @@ export const PRESETS = {
   },
 
 
-  /** Ruined skyline warzone — ash path, smoke/embers, FG rubble band for figures */
+  /** Ruined skyline warzone — ash grey + ember crimson; NOT warm pastoral stage */
   apocalyptic_warzone(ctx, w, h, state) {
     const { t, audio, intensity, emotion } = state;
-    fillSky(ctx, w, h, '#1a0800', '#3a1810', '#1a1008');
-    // smoke columns in sky band
-    ctx.fillStyle = `rgba(40,30,25,${0.35 + intensity * 0.2})`;
-    for (let i = 0; i < 5; i++) {
-      const x = w * (0.1 + i * 0.18) + Math.sin(t * 0.15 + i) * 12;
+    // HOLD-0330: ash grey sky + ember crimson — kill warm orange/brown stage look
+    fillSky(ctx, w, h, '#121418', '#2a2428', '#1a1618');
+    // smoke plumes — ash grey (not warm brown ovals-as-stage)
+    for (let i = 0; i < 6; i++) {
+      const x = w * (0.08 + i * 0.16) + Math.sin(t * 0.12 + i) * 10;
+      const smoke = ctx.createRadialGradient(x, h * 0.2, 8, x, h * 0.2, 70 + i * 6);
+      smoke.addColorStop(0, `rgba(70,68,72,${0.45 + intensity * 0.15})`);
+      smoke.addColorStop(0.55, `rgba(40,38,42,${0.28})`);
+      smoke.addColorStop(1, 'rgba(20,18,22,0)');
+      ctx.fillStyle = smoke;
       ctx.beginPath();
-      ctx.ellipse(x, h * 0.22 + (i % 3) * 18, 50 + i * 8, 70, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, h * 0.22 + (i % 3) * 14, 42 + i * 6, 64 + (i % 2) * 12, -0.15 + i * 0.05, 0, Math.PI * 2);
       ctx.fill();
     }
-    // ruined skyline — LOCKED heights (bass drives glow / embers only)
-    ctx.fillStyle = '#120a08';
+    // ruined skyline — cold ash charcoal
+    ctx.fillStyle = '#0e1014';
     for (let i = 0; i < 14; i++) {
       const bw = w / 12;
       const x = i * bw - 8;
       const bh = 60 + Math.abs(Math.sin(i * 1.9)) * 160;
       ctx.fillRect(x, h * 0.58 - bh * 0.35, bw * 0.7, bh);
-      // broken crown
       if (i % 3 === 0) {
         ctx.beginPath();
         ctx.moveTo(x, h * 0.58 - bh * 0.35);
@@ -961,26 +1035,45 @@ export const PRESETS = {
         ctx.lineTo(x + bw * 0.7, h * 0.58 - bh * 0.35);
         ctx.fill();
       }
+      // ember window slits
+      if (i % 2 === 0) {
+        ctx.fillStyle = `rgba(200,40,20,${0.15 + (audio.bass || 0) * 0.25})`;
+        ctx.fillRect(x + bw * 0.15, h * 0.58 - bh * 0.2, bw * 0.15, 6);
+        ctx.fillStyle = '#0e1014';
+      }
     }
-    // ash mid-ground path
-    const ash = ctx.createLinearGradient(0, h * 0.62, 0, h * 0.82);
-    ash.addColorStop(0, '#2a2018');
-    ash.addColorStop(1, '#1a1410');
-    ctx.fillStyle = ash;
-    ctx.fillRect(0, h * 0.62, w, h * 0.28);
-    // heat / fire glow (bass → intensity, not height)
-    const glow = ctx.createRadialGradient(w * 0.3, h * 0.55, 10, w * 0.3, h * 0.55, 140 + audio.bass * 60);
-    glow.addColorStop(0, `rgba(255,100,30,${0.2 + audio.bass * 0.35 + emotion.aggression * 0.15})`);
+    // rubble bands — ash grey, jagged
+    ctx.fillStyle = '#2a282c';
+    ctx.beginPath();
+    ctx.moveTo(0, h * 0.72);
+    for (let x = 0; x <= w; x += 18) {
+      const j = ((Math.sin(x * 0.05 + 2) * 0.5 + 0.5) * 22);
+      ctx.lineTo(x, h * 0.72 - j);
+    }
+    ctx.lineTo(w, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#1c1a1e';
+    ctx.fillRect(0, h * 0.78, w, h * 0.22);
+    // ember crimson glow pockets (NOT warm orange radial stage)
+    const glow = ctx.createRadialGradient(w * 0.28, h * 0.62, 8, w * 0.28, h * 0.62, 120 + (audio.bass || 0) * 40);
+    glow.addColorStop(0, `rgba(200,35,18,${0.28 + (audio.bass || 0) * 0.3 + (emotion.aggression || 0) * 0.12})`);
+    glow.addColorStop(0.5, `rgba(90,20,12,${0.14})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, w, h);
-    // damaged wall / signage plane for typography
-    typePlane(ctx, w, h, { x: w * 0.58, y: h * 0.3, w: w * 0.22, h: h * 0.1, alpha: 0.14, fill: 'rgba(180,100,60,0.12)' });
-    atmosParticles(ctx, w, h, t, audio, 'embers', intensity + audio.bass * 0.3);
-    motifMarks(ctx, w, h, state, { midY: h * 0.6, color: 'rgba(255,140,60,0.28)' });
+    const glow2 = ctx.createRadialGradient(w * 0.72, h * 0.58, 6, w * 0.72, h * 0.58, 90);
+    glow2.addColorStop(0, `rgba(160,30,20,${0.18 + (audio.onset || 0) * 0.2})`);
+    glow2.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow2;
+    ctx.fillRect(0, 0, w, h);
+    typePlane(ctx, w, h, { x: w * 0.58, y: h * 0.3, w: w * 0.22, h: h * 0.1, alpha: 0.12, fill: 'rgba(80,70,75,0.14)' });
+    atmosParticles(ctx, w, h, t, audio, 'embers', intensity + (audio.bass || 0) * 0.3);
+    motifMarks(ctx, w, h, state, { midY: h * 0.6, color: 'rgba(180,50,30,0.28)', stroke: 'rgba(200,80,60,0.2)' });
     figureStage(ctx, w, h, state, {
       groundY: h * 0.8, bandH: h * 0.2, pose: 'kneel',
-      color: 'rgba(8,4,2,0.92)', bandColor: 'rgba(25,18,12,0.7)', bandJagged: 16
+      color: 'rgba(6,6,8,0.94)', bandColor: 'rgba(28,24,28,0.75)', bandJagged: 16
     });
   },
 
@@ -1156,6 +1249,7 @@ export const PRESETS = {
 
   /** Peace meadow — soft hills, stylized fauna, grass path + FG band */
   meadow_fauna(ctx, w, h, state) {
+    if (_forbidPastoralFauna) return PRESETS.metal_hall(ctx, w, h, state);
     const { t, audio, intensity, emotion } = state;
     fillSky(ctx, w, h, '#87b8d8', '#c8e0a8', '#e8f0c0');
     // soft sun
@@ -1206,6 +1300,7 @@ export const PRESETS = {
 
   /** Quiet misty lake — spoken-friendly water bed */
   misty_lake(ctx, w, h, state) {
+    if (_forbidPastoralFauna) return PRESETS.storm(ctx, w, h, state);
     const { t, audio, intensity, emotion } = state;
     fillSky(ctx, w, h, '#6a8090', '#a8c0c8', '#d0e0e4');
     // mist band
@@ -1266,47 +1361,74 @@ export const PRESETS = {
     });
   },
 
-  /** Chaos fracture — cracked planes; glow pulse only (no height EQ) */
+  /** HOLD-0330: shards / glitch planes — high contrast, not warm abstract */
   reality_fracture(ctx, w, h, state) {
     const { t, audio, intensity, emotion } = state;
     const roles = state.roles || state.instruments || {};
-    fillSky(ctx, w, h, '#1a0810', '#2a1020', '#100808');
-    // locked shard panels
+    // HOLD-0330: cold violet/cyan glitch shards — NOT soft warm ovals
+    fillSky(ctx, w, h, '#080814', '#121028', '#0a0818');
     const shards = [
       [0.05, 0.1, 0.35, 0.4], [0.4, 0.05, 0.3, 0.35], [0.7, 0.15, 0.28, 0.45],
       [0.1, 0.5, 0.4, 0.35], [0.55, 0.48, 0.4, 0.4]
     ];
     for (let i = 0; i < shards.length; i++) {
       const [px, py, pw, ph] = shards[i];
-      const ox = Math.sin(t * 0.3 + i) * 4;
-      const oy = Math.cos(t * 0.25 + i) * 3;
-      ctx.fillStyle = i % 2 === 0 ? '#180c14' : '#221018';
+      const ox = Math.sin(t * 0.35 + i) * 6;
+      const oy = Math.cos(t * 0.28 + i) * 4;
       ctx.save();
       ctx.translate(ox, oy);
-      ctx.fillRect(w * px, h * py, w * pw, h * ph);
-      ctx.strokeStyle = `rgba(255,80,120,${0.15 + (roles.harsh || audio.onset) * 0.35})`;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(w * px, h * py, w * pw, h * ph);
-      // crack lines
+      // cold broken plane fill
+      ctx.fillStyle = i % 2 === 0 ? '#0e1020' : '#16122a';
       ctx.beginPath();
-      ctx.moveTo(w * px, h * (py + ph * 0.5));
-      ctx.lineTo(w * (px + pw * 0.6), h * (py + ph * 0.2));
-      ctx.lineTo(w * (px + pw), h * (py + ph * 0.7));
+      const x0 = w * px, y0 = h * py, sw = w * pw, sh = h * ph;
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x0 + sw * 0.92, y0 + sh * 0.08);
+      ctx.lineTo(x0 + sw, y0 + sh * 0.85);
+      ctx.lineTo(x0 + sw * 0.1, y0 + sh);
+      ctx.closePath();
+      ctx.fill();
+      // cyan / violet crack edges
+      const cold = i % 2 === 0
+        ? `rgba(80,220,255,${0.28 + (roles.harsh || audio.onset || 0) * 0.4})`
+        : `rgba(180,100,255,${0.26 + (roles.harsh || audio.onset || 0) * 0.35})`;
+      ctx.strokeStyle = cold;
+      ctx.lineWidth = 1.8;
       ctx.stroke();
+      // internal glitch cracks
+      ctx.beginPath();
+      ctx.moveTo(x0 + sw * 0.1, y0 + sh * 0.5);
+      ctx.lineTo(x0 + sw * 0.55, y0 + sh * 0.15);
+      ctx.lineTo(x0 + sw * 0.9, y0 + sh * 0.7);
+      ctx.stroke();
+      // chromatic offset shard
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = i % 2 ? 'rgba(0,255,220,0.15)' : 'rgba(160,80,255,0.15)';
+      ctx.fillRect(x0 + 4, y0 + 3, sw * 0.35, sh * 0.2);
+      ctx.globalAlpha = 1;
       ctx.restore();
     }
-    // ash glow pulse (bass/harsh → intensity)
-    const glow = ctx.createRadialGradient(w * 0.5, h * 0.5, 10, w * 0.5, h * 0.5, 180);
-    glow.addColorStop(0, `rgba(255,40,80,${0.1 + audio.bass * 0.25 + emotion.aggression * 0.15})`);
+    // cold fracture pulse (not warm pink)
+    const glow = ctx.createRadialGradient(w * 0.5, h * 0.5, 8, w * 0.5, h * 0.5, 200);
+    glow.addColorStop(0, `rgba(100,80,255,${0.12 + (audio.bass || 0) * 0.22 + (emotion.aggression || 0) * 0.12})`);
+    glow.addColorStop(0.5, `rgba(0,200,220,${0.06 + (audio.onset || 0) * 0.1})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, w, h);
-    atmosParticles(ctx, w, h, t, audio, 'embers', intensity * 0.7);
-    typePlane(ctx, w, h, { x: w * 0.3, y: h * 0.35, w: w * 0.4, h: h * 0.12, alpha: 0.1, fill: 'rgba(255,100,140,0.08)' });
-    motifMarks(ctx, w, h, state, { midY: h * 0.55, color: 'rgba(255,80,100,0.3)' });
+    // scan tear lines
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    for (let i = 0; i < 5; i++) {
+      const y = ((t * 90 + i * 73) % h);
+      ctx.fillStyle = i % 2 ? 'rgba(0,255,230,0.2)' : 'rgba(160,80,255,0.18)';
+      ctx.fillRect(0, y, w, 2);
+    }
+    ctx.restore();
+    atmosParticles(ctx, w, h, t, audio, 'embers', intensity * 0.45);
+    typePlane(ctx, w, h, { x: w * 0.3, y: h * 0.35, w: w * 0.4, h: h * 0.12, alpha: 0.1, fill: 'rgba(100,180,255,0.08)' });
+    motifMarks(ctx, w, h, state, { midY: h * 0.55, color: 'rgba(120,100,255,0.3)', stroke: 'rgba(0,230,255,0.25)' });
     figureStage(ctx, w, h, state, {
       groundY: h * 0.82, bandH: h * 0.14, pose: 'walk',
-      color: 'rgba(0,0,0,0.9)', bandColor: 'rgba(20,8,12,0.55)', bandJagged: 12, bodyH: 38
+      color: 'rgba(0,0,8,0.92)', bandColor: 'rgba(20,16,40,0.6)', bandJagged: 12, bodyH: 38
     });
   },
 
@@ -1461,12 +1583,13 @@ export const PRESETS = {
     });
   },
 
-  /** Arena / industrial hall — girders, pit depth, red/ash wash, storm grit. No candy. */
+  /** Arena / industrial hall — COLD steel blue-grey, rivets, cyan shafts. NOT warm orange. */
   metal_hall(ctx, w, h, state) {
     const { t, audio, intensity, emotion } = state;
-    fillSky(ctx, w, h, '#1a0808', '#2a1010', '#140808');
-    // roof girders (locked geometry)
-    ctx.strokeStyle = `rgba(180,160,160,${0.35 + emotion.aggression * 0.2})`;
+    // HOLD-0330: cold steel blue-grey — kill #1a0808 warm-red / orange motif language
+    fillSky(ctx, w, h, '#0a1018', '#141c28', '#0c1218');
+    // roof girders — cold steel
+    ctx.strokeStyle = `rgba(140,165,190,${0.45 + (emotion.aggression || 0) * 0.2})`;
     ctx.lineWidth = 3;
     for (let i = 0; i < 6; i++) {
       const x = w * (0.1 + i * 0.15);
@@ -1479,32 +1602,88 @@ export const PRESETS = {
       ctx.moveTo(x, h * 0.08);
       ctx.lineTo(x, h * 0.32);
       ctx.stroke();
+      // cross-brace
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x - 22, h * 0.14);
+      ctx.lineTo(x + 22, h * 0.22);
+      ctx.stroke();
+      ctx.lineWidth = 3;
     }
-    // side wall panels
-    ctx.fillStyle = '#1a1010';
-    ctx.fillRect(0, h * 0.3, w * 0.12, h * 0.5);
-    ctx.fillRect(w * 0.88, h * 0.3, w * 0.12, h * 0.5);
-    // pit depth
+    // riveted side panels — blue-grey steel
+    ctx.fillStyle = '#151c26';
+    ctx.fillRect(0, h * 0.28, w * 0.14, h * 0.52);
+    ctx.fillRect(w * 0.86, h * 0.28, w * 0.14, h * 0.52);
+    ctx.fillStyle = '#1a2430';
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 2; col++) {
+        const px = 6 + col * (w * 0.07);
+        const py = h * 0.32 + row * (h * 0.055);
+        ctx.fillRect(px, py, w * 0.055, h * 0.04);
+        // rivets
+        ctx.fillStyle = 'rgba(160,190,210,0.55)';
+        ctx.beginPath();
+        ctx.arc(px + 4, py + 4, 1.6, 0, Math.PI * 2);
+        ctx.arc(px + w * 0.055 - 4, py + 4, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#1a2430';
+        // mirror right wall
+        const rx = w * 0.88 + col * (w * 0.07);
+        ctx.fillRect(rx, py, w * 0.055, h * 0.04);
+        ctx.fillStyle = 'rgba(160,190,210,0.55)';
+        ctx.beginPath();
+        ctx.arc(rx + 4, py + 4, 1.6, 0, Math.PI * 2);
+        ctx.arc(rx + w * 0.055 - 4, py + 4, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#1a2430';
+      }
+    }
+    // industrial floor pit — cold steel
     const pit = ctx.createLinearGradient(0, h * 0.55, 0, h);
-    pit.addColorStop(0, '#2a1414');
-    pit.addColorStop(0.5, '#120808');
-    pit.addColorStop(1, '#080404');
+    pit.addColorStop(0, '#1a2430');
+    pit.addColorStop(0.5, '#0c1218');
+    pit.addColorStop(1, '#06090e');
     ctx.fillStyle = pit;
     ctx.fillRect(0, h * 0.55, w, h * 0.45);
-    // red/ash wash pulse (bass → alpha)
-    const wash = ctx.createRadialGradient(w * 0.5, h * 0.45, 30, w * 0.5, h * 0.45, 220);
-    wash.addColorStop(0, `rgba(255,40,20,${0.12 + audio.bass * 0.28 + emotion.aggression * 0.15})`);
-    wash.addColorStop(0.5, `rgba(120,20,10,${0.15})`);
+    // floor grate lines
+    ctx.strokeStyle = 'rgba(80,110,140,0.35)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 10; i++) {
+      const y = h * 0.58 + i * (h * 0.035);
+      ctx.beginPath();
+      ctx.moveTo(w * 0.14, y);
+      ctx.lineTo(w * 0.86, y);
+      ctx.stroke();
+    }
+    // cyan-steel light shafts (NOT warm orange)
+    const shaftA = 0.1 + (audio.treble || 0) * 0.12 + (audio.bass || 0) * 0.08;
+    for (let i = 0; i < 4; i++) {
+      const x = w * (0.25 + i * 0.16) + Math.sin(t * 0.3 + i) * 6;
+      const g = ctx.createLinearGradient(x, 0, x + 20, h * 0.7);
+      g.addColorStop(0, `rgba(120,200,230,${shaftA})`);
+      g.addColorStop(0.5, `rgba(60,120,160,${shaftA * 0.45})`);
+      g.addColorStop(1, 'rgba(40,80,120,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(x - 12, 0);
+      ctx.lineTo(x + 18, 0);
+      ctx.lineTo(x + 40, h * 0.72);
+      ctx.lineTo(x - 30, h * 0.72);
+      ctx.fill();
+    }
+    // cold steel center wash (bass pulse) — cyan/steel, never orange
+    const wash = ctx.createRadialGradient(w * 0.5, h * 0.42, 24, w * 0.5, h * 0.42, 200);
+    wash.addColorStop(0, `rgba(100,180,210,${0.08 + (audio.bass || 0) * 0.18 + (emotion.aggression || 0) * 0.08})`);
+    wash.addColorStop(0.5, `rgba(40,70,100,${0.1})`);
     wash.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = wash;
     ctx.fillRect(0, 0, w, h);
-    // storm grit
-    atmosParticles(ctx, w, h, t, audio, 'embers', intensity * 0.8);
-    typePlane(ctx, w, h, { x: w * 0.3, y: h * 0.25, w: w * 0.4, h: h * 0.1, alpha: 0.1, fill: 'rgba(255,80,60,0.1)' });
-    motifMarks(ctx, w, h, state, { midY: h * 0.58, color: 'rgba(255,100,60,0.3)' });
+    atmosParticles(ctx, w, h, t, audio, 'embers', intensity * 0.45);
+    typePlane(ctx, w, h, { x: w * 0.3, y: h * 0.25, w: w * 0.4, h: h * 0.1, alpha: 0.1, fill: 'rgba(100,160,200,0.1)' });
+    motifMarks(ctx, w, h, state, { midY: h * 0.58, color: 'rgba(100,170,210,0.3)', stroke: 'rgba(160,210,230,0.25)' });
     figureStage(ctx, w, h, state, {
       groundY: h * 0.8, bandH: h * 0.16, pose: 'walk',
-      color: 'rgba(0,0,0,0.9)', bandColor: 'rgba(30,10,10,0.55)', bandJagged: 10, bodyH: 42
+      color: 'rgba(0,0,0,0.92)', bandColor: 'rgba(20,30,42,0.6)', bandJagged: 10, bodyH: 42
     });
   },
 
@@ -2027,8 +2206,65 @@ export function getPresetIds() {
   return Object.keys(PRESETS).filter(k => !skip.has(k));
 }
 
+/** Congruent with Worlds HARD_LOCK — Visual paint allowlist under hardOnly */
+const HARD_LOCK_PAINT_IDS = new Set([
+  'metal_hall', 'reality_fracture', 'apocalyptic_warzone', 'red_void', 'storm'
+]);
+
+/** HOLD-0330: under hardOnly force cold/ash/red contrast — refuse warm pastoral bloom */
+function applyHardContrastVeil(ctx, w, h, presetId) {
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  if (presetId === 'metal_hall' || presetId === 'storm') {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, 'rgba(40,70,110,0.55)');
+    g.addColorStop(0.55, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(8,12,20,0.5)');
+    ctx.fillStyle = g;
+  } else if (presetId === 'red_void') {
+    const g = ctx.createRadialGradient(w * 0.5, h * 0.5, 10, w * 0.5, h * 0.5, w * 0.7);
+    g.addColorStop(0, 'rgba(180,0,40,0.35)');
+    g.addColorStop(1, 'rgba(8,0,4,0.55)');
+    ctx.fillStyle = g;
+  } else {
+    // warzone / fracture / fallback — ash + ember rim
+    const g = ctx.createLinearGradient(0, 0, w, 0);
+    g.addColorStop(0, 'rgba(120,20,16,0.45)');
+    g.addColorStop(0.5, 'rgba(20,18,22,0.15)');
+    g.addColorStop(1, 'rgba(30,20,40,0.4)');
+    ctx.fillStyle = g;
+  }
+  ctx.fillRect(0, 0, w, h);
+  // kill residual warm pastoral peach/orange bloom
+  ctx.globalAlpha = 0.12;
+  ctx.fillStyle = 'rgba(0,8,16,0.85)';
+  ctx.fillRect(0, 0, w, h * 0.18);
+  ctx.fillRect(0, h * 0.82, w, h * 0.18);
+  ctx.restore();
+}
+
 export function drawPreset(id, ctx, w, h, state) {
-  const resolved = PRESET_ID_ALIASES[id] || id;
-  const fn = PRESETS[resolved] || PRESETS.white_void;
-  fn(ctx, w, h, state);
+  let resolved = PRESET_ID_ALIASES[id] || id;
+  const st = state || {};
+  const d = st.directive || {};
+  // HOLD-0321/0330/0338: hard latch → strip pastoral; softClear NEVER redirects to metal_hall
+  const softClearPaint = !!(st.softClear || d.softClear || d.hardHud?.softClear
+    || d.hardHud?.softBedGuard);
+  const hardPaint = !softClearPaint && !!(
+    st.forbidPastoral || st.hardLock || st.hardOnly
+    || d.forbidPastoral || d.hardOnly || d.hardLock || d.aggressionLock
+    || d.hardHud?.hardOnly || d.hardHud?.nuclearHard
+  );
+  _forbidPastoralFauna = hardPaint;
+  if (hardPaint && !HARD_LOCK_PAINT_IDS.has(String(resolved || '').toLowerCase())) {
+    // Refuse warm pastoral / soft stage paint even if name wrong
+    resolved = 'metal_hall';
+  }
+  try {
+    const fn = PRESETS[resolved] || PRESETS.white_void;
+    fn(ctx, w, h, state);
+    if (hardPaint) applyHardContrastVeil(ctx, w, h, resolved);
+  } finally {
+    _forbidPastoralFauna = false;
+  }
 }

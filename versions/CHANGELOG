@@ -48,3 +48,73 @@ Camera: kinetic travel + earned short orbit arcs (CEO keep-adding)
 Scope: js/camera/* only (+ versions checkpoint). No Visual/Scene/renderer edits.
 node --check: system.js + framing.js OK
 v2-scene-20260930-062600-vibe-match — Scene vibe-match: cast bands + sticky 9s + spin/travel + vocalist hub + earned weapons; Worlds packs intact
+
+=== v2-lyrics-scenic-glue-20261001-185641 ===
+Time: 2026-10-01 18:58:17 PT
+Lyrics Brain — CEO coherence-hard: motif words glue INTO the scene (scenic props/world cues).
+Checkpoint: /workspace/light-show-versions/v2-lyrics-scenic-glue-20261001-185641
+Cache: ?v=lyrics-fix2 (css + main module)
+
+Files:
+- js/lyrics/semantic.js — SCENIC_HANDOFF map for all 40 concepts; extractLine/getConcepts/extract
+  now ship props[], worldCue{family,presets}, glueScore, motif[]; garden/rose/bloom → meadow_fauna;
+  mirror patterns fixed (myself/mirror word). Helpers: scenicForConcept, attachScenicFields,
+  glueScoreForOwnership. Ownership: lyric≈0.82 glue (plant hard), instrument≈0.35 (soft, don't fight
+  planted world), either≈0.55.
+- js/director/motifProps.js — prefer concept.props from Lyrics Brain; fill missing CONCEPT_PROPS
+  (candy_joy, autumn_leaves, lone_walker, crowd_sea, meadow_fauna, misty_lake, dark_sparse,
+  reality_fracture, spoken_word_bed); expand SYMBOL_PROPS.
+- js/director/scenePlan.js — reactToLyricConcept consumes worldCue + glueScore (soft pack hint,
+  plant strength, longer gaps when glue low).
+- js/main.js — pass glueScore/worldCue/props on reactToLyricConcept ctx; cache bump only.
+- index.html — ?v=lyrics-fix2
+
+Glue contract (Scene Director / Worlds):
+1. lineConcept.props = prop nominations (umbrella, crown_of_fire, highway_lines, …) — plant as WORLD CUES, not competing stickers.
+2. lineConcept.worldCue.family + presets = soft pack family hint (neon/nature/warzone/…).
+3. lineConcept.glueScore = blend weight; <0.45 → soft (instrument) — keep planted world, still plant props gently.
+4. propsForConcept(concept) prefers concept.props when present.
+5. Do NOT teleport mid-chorus; chorus intensifies same movie (MUSIC-BRIEF coherence-hard).
+
+node --check: semantic.js motifProps.js scenePlan.js main.js OK
+ESM smoke: rain/fire/ocean/night/heart/garden/stars/mirror/war/road → scenic props+worldCue OK
+
+
+=== v2-lyrics-line-props-rt-20261001-185942 ===
+Time: 2026-10-01 19:00:24 PT
+Lyrics Brain — CEO: current lyric LINE must update scenic props/motifs promptly (not wait whole verse).
+Checkpoint: /workspace/light-show-versions/v2-lyrics-line-props-rt-20261001-185942
+Cache: ?v=lyrics-rt3 (css + main module)
+
+Latency removed / tightened:
+1. _liveMotifProps preferred FULL planted history (oldest-first slice(0,3)) over current line
+   liveIds → NEW: current-line scenic props lead emission; planted only soft-fills.
+2. Verse/pre-only plant gate in reactToLyricConcept + _liveMotifProps blocked chorus/bridge
+   line props → NEW: plant/reinforce props+motifs on EVERY line advance (any section).
+3. queueCallback stays verse/pre (no chorus spam); worldCue/pack family gaps (11s/16s soft)
+   UNCHANGED — one-fantasy continuity preserved.
+4. main.js now passes lineChangeId (phraseIndex|text) so props refresh keys off LINE advance,
+   not only concept-id change (same concept on new line still refreshes _liveLineProps).
+
+Files:
+- js/director/scenePlan.js — _liveLineProps/_lastLineChangeId; line→props RT in
+  reactToLyricConcept + _liveMotifProps (remove verse-only props gate).
+- js/main.js — pass lineChangeId + phraseIndex on reactToLyricConcept.
+- js/director/motifProps.js — comment only (line→props RT contract).
+- index.html — ?v=lyrics-rt3 (was lyrics-fix2 on disk).
+
+World continuity (NOT loosened): canChangeForConcept gaps, packHold, liveSteer mid-chorus
+world lock, soft worldCue when glue low — props path only.
+
+node --check: scenePlan.js motifProps.js main.js OK
+2026-10-01 03:02 PDT — v2-scene-20261001-190216-realtime-moment: Scene realtime moment routing — readMoment precedence, moment vocal/energy/drop/onsetFast cast hits, pin flags into ensureCastPresence, STICKY_MS=15000; HOLD-0255 pastoral/worldCue gates kept.
+- Root: Continuity paints transition.from first; escape morph left soft forest/ocean as from → deer/fish flash; hardOnly lagged when martialHeat needed harsh; emit previousPreset soft.
+- vibeCast: SOFT_FORBIDDEN_UNDER_HARD list; martial/pinArmed/hardOnly → aggressive refuse.
+- scenePlan: widen martialHeat (orchestralMartial + energy/bass); softBedGuard never blocks martial; escape/pin transition.from HARD; absolute refuse from+to; emit clamp preset/previous/transition all HARD_LOCK; proof fields hardOnly/hardLatchUntil/pin/martial* + hardHud → __LS_HARD__.
+- presets: drawPreset sets _forbidPastoralFauna; forest/ocean/meadow/misty_lake redirect to metal_hall/storm under hard; faunaSilhouette no-op.
+- renderer state stamps forbidPastoral/hardOnly; main+controls proof HUD on ?v=cohere4|?debug=hardlock; css .hud-proof; index ?v=cohere4.
+- HARD_LOCK: metal_hall|reality_fracture|apocalyptic_warzone|red_void|storm; PIN_HOLD_MS=20000.
+- Night Owl soft path unchanged when !hardOnly. Do NOT git push.
+- Pre-ckpt: v2-worlds-pre-hold-0321-20261001-192221
+
+2026-10-01 03:42 PT — v2-worlds-20261001-034206-hold-0338-softclear — Worlds HOLD-0338 softClear/softBed → hardOnly false (Night Owl ≠ metal_hall); Clash HARD_LOCK intact; ?v=cohere6

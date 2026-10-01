@@ -12,7 +12,11 @@
  *   symbols?: string[],
  *   patterns: RegExp[],
  *   figure?: { presence: 'none'|'lone'|'pair'|'crowd'|'self'|'silhouette', role?: string, suggestsCharacter: boolean },
- *   frameOwnership?: 'lyric'|'instrument'|'either'
+ *   frameOwnership?: 'lyric'|'instrument'|'either',
+ *   props?: string[],
+ *   worldCue?: { family: string|null, presets: string[] },
+ *   glueScore?: number,
+ *   motif?: string[]
  * }} VisualConcept */
 
 export const CONCEPT_GRAPH = [
@@ -29,7 +33,7 @@ export const CONCEPT_GRAPH = [
   },
   {
     id: 'running_from_self',
-    patterns: [/runn?ing\s+from\s+(my|myself|me)/i, /escape\s+(myself|who\s+i)/i, /mirror\s+(of\s+)?me/i, /two\s+faces/i, /can'?t\s+face\s+(myself|who)/i],
+    patterns: [/runn?ing\s+from\s+(my|myself|me)/i, /escape\s+(myself|who\s+i)/i, /mirror\s+(of\s+)?(me|myself|mine)?/i, /\bmirrors?\b/i, /two\s+faces/i, /can'?t\s+face\s+(myself|who)/i, /reflection\s+of\s+(me|myself)/i],
     imagery: ['mirror chase through looping hallway', 'multiple translucent selves', 'face splitting into reflections'],
     presets: ['endless_staircase', 'white_void', 'futuristic_city'],
     mood: { tension: 0.75, darkness: 0.5, arousal: 0.7 },
@@ -407,12 +411,12 @@ export const CONCEPT_GRAPH = [
 
   {
     id: 'meadow_fauna',
-    patterns: [/\bmeadow\b/i, /\banimals?\b/i, /\bdeer\b/i, /\bherd\b/i, /\bpasture\b/i],
+    patterns: [/\bmeadow\b/i, /\bgarden\b/i, /\broses?\b/i, /\bbloom(ing|ed)?\b/i, /\banimals?\b/i, /\bdeer\b/i, /\bherd\b/i, /\bpasture\b/i],
     imagery: ['soft meadow hills with a distant herd', 'deer crossing a grass path', 'birds over warm green fields'],
     presets: ['meadow_fauna'],
     mood: { hope: 0.65, darkness: 0.12, valence: 0.5 },
     scale: 'cinematic',
-    symbols: ['meadow', 'fauna'],
+    symbols: ['meadow', 'fauna', 'garden'],
     figure: { presence: 'lone', role: 'meadow_walker', suggestsCharacter: true },
     frameOwnership: 'lyric'
   },
@@ -463,6 +467,98 @@ export const CONCEPT_GRAPH = [
 
 ];
 
+/**
+ * Motif words → scenic prop nominations + world cues (glue INTO the picture).
+ * Prop ids match js/director/motifProps.js CONCEPT_PROPS / SYMBOL_PROPS.
+ * glueScore: lyric-owned motifs plant hard; instrument-owned stay soft so they
+ * do not fight a planted world (Scene Director blends via this weight).
+ */
+export const SCENIC_HANDOFF = {
+  carrying_weight:   { props: ['cracked_stone', 'shadow_burden'], worldCue: { family: 'warzone', presets: ['industrial_tunnel', 'ancient_ruins', 'rainy_city'] }, glueScore: 0.82 },
+  running_from_self: { props: ['mirror_shard', 'doppel_trail'], worldCue: { family: 'chaos', presets: ['endless_staircase', 'white_void', 'futuristic_city'] }, glueScore: 0.82 },
+  falling_apart:     { props: ['fissure', 'ashes', 'ash_aftermath'], worldCue: { family: 'warzone', presets: ['ancient_ruins', 'storm', 'red_void'] }, glueScore: 0.55 },
+  rising_fire:       { props: ['crown_of_fire', 'ashes'], worldCue: { family: 'warzone', presets: ['burning_desert', 'storm', 'red_void'] }, glueScore: 0.55 },
+  ocean_depth:       { props: ['lighthouse_beam', 'wave_crest'], worldCue: { family: 'nature', presets: ['ocean', 'storm', 'dream_clouds'] }, glueScore: 0.55 },
+  lonely_road:       { props: ['highway_lines', 'lantern'], worldCue: { family: 'neon', presets: ['empty_highway', 'rainy_city', 'burning_desert'] }, glueScore: 0.82 },
+  night_drive:       { props: ['highway_lines', 'headlights_glow'], worldCue: { family: 'neon', presets: ['neon_highway', 'empty_highway', 'rainy_city'] }, glueScore: 0.82 },
+  city_night:        { props: ['neon_sign', 'umbrella'], worldCue: { family: 'neon', presets: ['rainy_city', 'neon_highway', 'futuristic_city'] }, glueScore: 0.35 },
+  rain_emotion:      { props: ['umbrella', 'rain_to_stars'], worldCue: { family: 'neon', presets: ['rainy_city', 'storm', 'empty_highway'] }, glueScore: 0.82 },
+  sacred_space:      { props: ['cathedral_window', 'prayer_beads'], worldCue: { family: 'sacred', presets: ['cathedral_space', 'white_void', 'space'] }, glueScore: 0.35 },
+  storm_chaos:       { props: ['tear_in_sky', 'lightning_vein', 'scrap_turret'], worldCue: { family: 'chaos', presets: ['storm', 'ocean', 'reality_fracture'] }, glueScore: 0.35 },
+  forest_lost:       { props: ['lantern', 'mist_veil'], worldCue: { family: 'nature', presets: ['forest', 'snow', 'dream_clouds'] }, glueScore: 0.35 },
+  space_void:        { props: ['tear_in_sky', 'rain_to_stars'], worldCue: { family: 'sacred', presets: ['space', 'dream_clouds', 'white_void'] }, glueScore: 0.35 },
+  heartbreak:        { props: ['cracked_heart', 'tear_in_sky'], worldCue: { family: 'neon', presets: ['rainy_city', 'white_void', 'empty_highway'] }, glueScore: 0.82 },
+  love_warmth:       { props: ['warm_window', 'lantern'], worldCue: { family: 'candy', presets: ['candy_happy', 'dream_clouds', 'rainy_city'] }, glueScore: 0.82 },
+  loneliness:        { props: ['empty_chair', 'lantern'], worldCue: { family: 'spoken', presets: ['white_void', 'empty_highway', 'spoken_word_bed'] }, glueScore: 0.82 },
+  nostalgia:         { props: ['faded_photo', 'lantern'], worldCue: { family: 'nature', presets: ['cozy_autumn', 'dream_clouds', 'empty_highway'] }, glueScore: 0.82 },
+  betrayal:          { props: ['mask', 'knife_shadow', 'handgun_beat'], worldCue: { family: 'warzone', presets: ['red_void', 'industrial_tunnel', 'endless_staircase'] }, glueScore: 0.82 },
+  rebirth:           { props: ['ashes', 'phoenix_feather', 'crown_of_fire'], worldCue: { family: 'warzone', presets: ['burning_desert', 'dream_clouds', 'empty_highway'] }, glueScore: 0.82 },
+  time_clocks:       { props: ['melting_clock', 'hourglass'], worldCue: { family: 'chaos', presets: ['endless_staircase', 'white_void', 'dream_clouds'] }, glueScore: 0.55 },
+  gold_emptiness:    { props: ['hollow_crown', 'empty_throne'], worldCue: { family: 'sacred', presets: ['ancient_ruins', 'white_void', 'cathedral_space'] }, glueScore: 0.82 },
+  death_void:        { props: ['ashes', 'doorway'], worldCue: { family: 'scary', presets: ['dark_sparse', 'white_void', 'red_void'] }, glueScore: 0.82 },
+  freedom_flight:    { props: ['broken_chains', 'wings'], worldCue: { family: 'nature', presets: ['dream_clouds', 'space', 'empty_highway'] }, glueScore: 0.82 },
+  war_battle:        { props: ['torn_banner', 'ashes', 'rifle_silhouette', 'scrap_turret'], worldCue: { family: 'warzone', presets: ['apocalyptic_warzone', 'burning_desert', 'ancient_ruins'] }, glueScore: 0.55 },
+  dream_surreal:     { props: ['floating_door', 'rain_to_stars'], worldCue: { family: 'nature', presets: ['dream_clouds', 'endless_staircase', 'white_void'] }, glueScore: 0.35 },
+  snow_cold:         { props: ['breath_fog', 'lantern'], worldCue: { family: 'nature', presets: ['snow', 'white_void', 'forest'] }, glueScore: 0.35 },
+  industrial:        { props: ['sparks', 'gear_silhouette'], worldCue: { family: 'warzone', presets: ['industrial_tunnel', 'futuristic_city', 'red_void'] }, glueScore: 0.35 },
+  hope_light:        { props: ['beacon', 'lantern'], worldCue: { family: 'nature', presets: ['candy_happy', 'empty_highway', 'meadow_fauna'] }, glueScore: 0.82 },
+  candy_joy:         { props: ['warm_window', 'lantern', 'beacon'], worldCue: { family: 'candy', presets: ['candy_happy', 'dream_clouds', 'white_void'] }, glueScore: 0.82 },
+  autumn_leaves:     { props: ['faded_photo', 'lantern'], worldCue: { family: 'autumn', presets: ['cozy_autumn', 'forest', 'empty_highway'] }, glueScore: 0.82 },
+  rage:              { props: ['shockwave', 'tear_in_sky', 'handgun_beat', 'riot_baton'], worldCue: { family: 'warzone', presets: ['apocalyptic_warzone', 'red_void', 'storm'] }, glueScore: 0.82 },
+  home_leaving:      { props: ['doorway', 'rearview_glow'], worldCue: { family: 'autumn', presets: ['empty_highway', 'rainy_city', 'cozy_autumn'] }, glueScore: 0.82 },
+  silence_void:      { props: ['thick_glass', 'mute_halo'], worldCue: { family: 'spoken', presets: ['white_void', 'spoken_word_bed', 'snow'] }, glueScore: 0.82 },
+  lone_walker:       { props: ['highway_lines', 'lantern'], worldCue: { family: 'neon', presets: ['empty_highway', 'rainy_city', 'white_void'] }, glueScore: 0.82 },
+  crowd_sea:         { props: ['neon_sign', 'umbrella'], worldCue: { family: 'neon', presets: ['rainy_city', 'futuristic_city', 'industrial_tunnel'] }, glueScore: 0.82 },
+  meadow_fauna:      { props: ['lantern', 'breath_fog'], worldCue: { family: 'nature', presets: ['meadow_fauna', 'forest', 'cozy_autumn'] }, glueScore: 0.82 },
+  misty_lake:        { props: ['lighthouse_beam', 'mist_veil'], worldCue: { family: 'nature', presets: ['misty_lake', 'ocean', 'snow'] }, glueScore: 0.82 },
+  dark_sparse:       { props: ['empty_chair', 'lantern'], worldCue: { family: 'scary', presets: ['dark_sparse', 'white_void'] }, glueScore: 0.82 },
+  reality_fracture:  { props: ['fissure', 'tear_in_sky', 'shockwave'], worldCue: { family: 'chaos', presets: ['reality_fracture', 'red_void', 'endless_staircase'] }, glueScore: 0.55 },
+  spoken_word_bed:   { props: ['thick_glass', 'beacon'], worldCue: { family: 'spoken', presets: ['spoken_word_bed', 'white_void', 'dream_clouds'] }, glueScore: 0.82 }
+};
+
+/** Default glue from lyric vs instrument ownership (soft = don't fight planted world). */
+export function glueScoreForOwnership(ownership) {
+  if (ownership === 'lyric') return 0.82;
+  if (ownership === 'instrument') return 0.35;
+  return 0.55;
+}
+
+/**
+ * Resolve scenic props / worldCue / glue for a concept (stable Scene Director contract).
+ * @param {object|null} concept
+ * @returns {{ props: string[], worldCue: { family: string|null, presets: string[] }, glueScore: number, motif: string[] }}
+ */
+export function scenicForConcept(concept) {
+  if (!concept) {
+    return { props: [], worldCue: { family: null, presets: [] }, glueScore: 0, motif: [] };
+  }
+  const hand = SCENIC_HANDOFF[concept.id] || null;
+  const ownership = concept.frameOwnership || 'either';
+  const props = (hand?.props || concept.props || []).slice(0, 4);
+  const worldCue = hand?.worldCue
+    ? { family: hand.worldCue.family || null, presets: (hand.worldCue.presets || []).slice(0, 4) }
+    : { family: null, presets: (concept.presets || []).slice(0, 3) };
+  const glueScore = typeof hand?.glueScore === 'number'
+    ? hand.glueScore
+    : (typeof concept.glueScore === 'number' ? concept.glueScore : glueScoreForOwnership(ownership));
+  const motif = (concept.symbols || concept.motif || []).slice(0, 3);
+  return { props, worldCue, glueScore, motif };
+}
+
+/** Attach scenic handoff fields onto a concept payload (mutates copy). */
+export function attachScenicFields(concept) {
+  if (!concept) return null;
+  const s = scenicForConcept(concept);
+  return {
+    ...concept,
+    props: s.props,
+    worldCue: s.worldCue,
+    glueScore: s.glueScore,
+    motif: s.motif
+  };
+}
+
+
 const STYLE_MODIFIERS = {
   realistic: { abstract: 0.1, mythic: 0.05 },
   cinematic: { abstract: 0.2, mythic: 0.15 },
@@ -477,16 +573,23 @@ const STYLE_MODIFIERS = {
 
 /** Snapshot of concept ids + imagery for Scene Director / tooling */
 export function getConcepts() {
-  return CONCEPT_GRAPH.map(c => ({
-    id: c.id,
-    imagery: c.imagery.slice(),
-    presets: c.presets.slice(),
-    mood: { ...c.mood },
-    scale: c.scale,
-    symbols: c.symbols ? c.symbols.slice() : [],
-    figure: c.figure ? { ...c.figure } : null,
-    frameOwnership: c.frameOwnership || null
-  }));
+  return CONCEPT_GRAPH.map(c => {
+    const scenic = scenicForConcept(c);
+    return {
+      id: c.id,
+      imagery: c.imagery.slice(),
+      presets: c.presets.slice(),
+      mood: { ...c.mood },
+      scale: c.scale,
+      symbols: c.symbols ? c.symbols.slice() : [],
+      figure: c.figure ? { ...c.figure } : null,
+      frameOwnership: c.frameOwnership || null,
+      props: scenic.props,
+      worldCue: scenic.worldCue,
+      glueScore: scenic.glueScore,
+      motif: scenic.motif
+    };
+  });
 }
 
 /** Scene Director helper — character presence suggested by a concept hit. */
@@ -536,12 +639,12 @@ export class SemanticExtractor {
         }
       }
       if (score > 0) {
-        hits.push({
+        hits.push(attachScenicFields({
           ...concept,
           score,
           matched,
           imageryPick: concept.imagery[Math.floor(Math.random() * concept.imagery.length)]
-        });
+        }));
       }
     }
 
@@ -564,7 +667,7 @@ export class SemanticExtractor {
     const boosts = [];
     const map = [
       [/war|battle|ruin(ed)?|wreckage|soldier|battlefield/, 'apocalyptic_warzone'],
-      [/meadow|animal|deer|herd|pasture|wildlife/, 'meadow_fauna'],
+      [/meadow|garden|rose|bloom|animal|deer|herd|pasture|wildlife/, 'meadow_fauna'],
       [/lake|mist(y)?|fog|shore|quiet\s+water/, 'misty_lake'],
       [/sparse|horror|alone|isolation|dark\s+and\s+empty/, 'dark_sparse'],
       [/fracture|shatter|glitch|crack(ed|ing)?|splinter/, 'reality_fracture'],
@@ -680,6 +783,7 @@ export class SemanticExtractor {
         const ownership = speechHard
           ? (concept.frameOwnership === 'instrument' ? 'either' : 'lyric')
           : (concept.frameOwnership || null);
+        const scenic = scenicForConcept({ ...concept, frameOwnership: ownership });
         best = {
           id: concept.id,
           imagery: concept.imagery,
@@ -689,6 +793,10 @@ export class SemanticExtractor {
           symbols: concept.symbols,
           figure: concept.figure || null,
           frameOwnership: ownership,
+          props: scenic.props,
+          worldCue: scenic.worldCue,
+          glueScore: scenic.glueScore,
+          motif: scenic.motif,
           score,
           matched,
           speechSteer: speechSteerWeight(speechLike),

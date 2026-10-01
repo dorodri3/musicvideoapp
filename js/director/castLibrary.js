@@ -223,7 +223,8 @@ export function pickArchetype(dom, opts = {}) {
   const speechLike = !!dom?.speechLike || ladder === 'spoken';
   const sec = opts.sectionType || 'verse';
   const afterGate = !!opts.afterGate;
-  const aggressive = ladder === 'aggressive' || family === 'chaotic' || !!dom?.aggressive;
+  const aggressive = ladder === 'aggressive' || family === 'chaotic' || !!dom?.aggressive
+    || !!dom?.forbidPastoral || !!dom?.aggressionLock;
 
   if (speechLike || family === 'spoken' || ladder === 'spoken') return 'spoken_intimate';
 
@@ -1221,16 +1222,30 @@ export function applyDanceIntent(members, cast = {}, opts = {}) {
     archetype = null,
     ladder = null,
     aggression = 0,
-    energy = null
+    energy = null,
+    moment = null,
+    forbidPastoral = false,
+    aggressionLock = false
   } = opts;
 
   const family = String(vibeFamily || 'neutral');
   const L = String(ladder || family || 'neutral');
   const bias = String(danceBias || 'mid');
   const arch = String(archetype || cast.archetype || '');
-  const energyN = typeof energy === 'number' ? energy : intensity;
+  const momentObj = moment && typeof moment === 'object' ? moment : {};
+  // Realtime moment energy wins for body timing; frame energy is fallback only.
+  const energyN = typeof momentObj.energy === 'number' ? momentObj.energy
+    : (typeof energy === 'number' ? energy : intensity);
   const aggN = typeof aggression === 'number' ? aggression : 0;
-  const aggressive = L === 'aggressive' || family === 'chaotic' || aggN >= 0.55
+  // HOLD-0338: softClear never pinHard
+  const pinHard = !(opts.softClear || momentObj.softClear || opts.softBedGuard || momentObj.softBedGuard
+    || opts.hardHud?.softClear || opts.hardHud?.softBedGuard)
+    && !!(forbidPastoral || aggressionLock
+    || momentObj.forbidPastoral || momentObj.aggressionLock
+    || momentObj.hardOnly || momentObj.nuclearHard
+    || opts.hardOnly || opts.hardLock);
+  const momentHit = pinHard && (momentObj.drop >= 0.55 || momentObj.onsetFast >= 0.55);
+  const aggressive = pinHard || L === 'aggressive' || family === 'chaotic' || aggN >= 0.55
     || arch === 'chaos_fracture' || arch === 'ash_survivor';
   const warm = L === 'warm' || family === 'warm';
   const tense = L === 'tense' || family === 'tense';
@@ -1262,7 +1277,8 @@ export function applyDanceIntent(members, cast = {}, opts = {}) {
     danceEnergy = sectionType === 'chorus' ? 0.28 : 0.22;
   } else if (aggressive) {
     // High aggression/energy → spin (orbit camera paired in scenePlan); travel path ok
-    const hi = energyN >= 0.55 || aggN >= 0.55 || sectionType === 'drop' || sectionType === 'chorus';
+    const hi = energyN >= 0.55 || momentHit || aggN >= 0.55
+      || sectionType === 'drop' || sectionType === 'chorus';
     if (hi) {
       danceIntent = 'spin';
       danceEnergy = Math.min(1, 0.55 + intensity * 0.35 + aggN * 0.2);
@@ -1497,20 +1513,31 @@ export function ensureCastPresence(cast, opts = {}) {
     sectionType = 'verse',
     ladder = null,
     aggression = 0,
-    vocalFocus = false
+    vocalFocus = false,
+    forbidPastoral = false,
+    aggressionLock = false
   } = opts;
 
   const L = String(ladder || vibeFamily || 'neutral');
-  const aggressive = L === 'aggressive' || L === 'chaotic' || aggression >= 0.55
+  // HOLD-0255/0321/0338: forbidPastoral|aggressionLock|hardOnly → chaos cast (softClear refuses)
+  const pinHard = !(opts.softClear || opts.moment?.softClear || opts.softBedGuard || opts.moment?.softBedGuard
+    || opts.hardHud?.softClear || opts.hardHud?.softBedGuard)
+    && !!(forbidPastoral || aggressionLock || opts.hardOnly || opts.hardLock);
+  const aggressive = pinHard
+    || L === 'aggressive' || L === 'chaotic' || aggression >= 0.55
     || cast.archetype === 'chaos_fracture' || cast.archetype === 'ash_survivor';
 
-  const sparseMood = speechLike
+  const SOFT_ARCH = /^(pastoral_walker|nature_fauna|meadow_wanderer|sacred_solitary)$/;
+  const SOFT_CHAR = /^(path_walker_dawn|meadow_wanderer|lake_shore_figure|autumn_road_traveler|heal_hands_open|hooded_pilgrim|crane_dusk|herd_silhouette|fish_motes|songbird_pair|stag_fog|butterflies_wash)$/;
+  const SOFT_OUTFIT = /^(linen_dawn|moss_trail|aisle_linen|water_gloss)$/;
+
+  const sparseMood = !aggressive && (speechLike
     || vibeFamily === 'scary'
     || vibeFamily === 'spoken'
     || L === 'scary'
     || L === 'spoken'
     || cast.archetype === 'dread_sparse'
-    || cast.archetype === 'void_presence';
+    || cast.archetype === 'void_presence');
 
   // Phone LED: Visual targetFrac ~0.60h × (dirScale/1.55). Floor high so body
   // cannot collapse to a dot even if Visual clamps mid-pipeline.
@@ -1520,9 +1547,9 @@ export function ensureCastPresence(cast, opts = {}) {
   const hubPresence = 1;
 
   if (cast.kind === 'none' || !cast.kind || cast.kind === 'fauna') {
-    cast.kind = vocalFocus ? 'figure_lone' : 'traveler';
+    cast.kind = (vocalFocus && !aggressive) ? 'figure_lone' : (aggressive ? 'crowd_ghosts' : 'traveler');
     cast.count = Math.max(1, cast.count || 1);
-    cast.action = cast.action && cast.action !== 'dissolve' ? cast.action : 'walk';
+    cast.action = cast.action && cast.action !== 'dissolve' ? cast.action : (aggressive ? 'run' : 'walk');
   }
   // VOCALIST shape: hub = fg lead silhouette — not fauna/crowd_ghosts
   if (vocalFocus && !aggressive) {
@@ -1531,7 +1558,6 @@ export function ensureCastPresence(cast, opts = {}) {
       cast.count = 1;
     }
     if (cast.archetype === 'nature_fauna' || cast.archetype === 'formation_crew' || cast.archetype === 'chaos_fracture') {
-      // Keep chaos_fracture when aggressive already handled above; here soft vocal lead
       if (cast.archetype !== 'chaos_fracture' && cast.archetype !== 'ash_survivor') {
         cast.archetype = 'fg_performer';
       }
@@ -1540,20 +1566,46 @@ export function ensureCastPresence(cast, opts = {}) {
       cast.archetype = sparseMood ? cast.archetype || 'spoken_intimate' : 'fg_performer';
     }
   }
-  if (vocalFocus && aggressive && (cast.kind === 'fauna')) {
-    cast.kind = 'figure_lone';
-    cast.archetype = 'fg_performer';
-  }
 
-  // Kill pastoral/fauna defaults when aggressive ladder is live
-  if (aggressive && (cast.archetype === 'pastoral_walker' || cast.archetype === 'nature_fauna'
-      || !cast.archetype || cast.characterId === 'path_walker_dawn')) {
-    cast.archetype = cast.archetype === 'ash_survivor' ? 'ash_survivor' : 'chaos_fracture';
-    cast.characterId = cast.characterId && cast.characterId !== 'path_walker_dawn'
-      ? cast.characterId
-      : 'scatter_runners';
-    if (!cast.outfitId || cast.outfitId === 'linen_dawn' || cast.outfitId === 'moss_trail' || cast.outfitId === 'stage_gloss') {
-      cast.outfitId = 'fracture_rag';
+  // HOLD-0255/0306: while pin/aggressive — FORCE chaos/ash; NEVER pastoral/fauna/linen/moss/deer
+  // HOLD-0306: pinHard → ash/chaos ONLY (no fg_performer pale soft look mid-window)
+  if (aggressive) {
+    const softArch = !cast.archetype || SOFT_ARCH.test(cast.archetype);
+    const softChar = !cast.characterId || SOFT_CHAR.test(cast.characterId);
+    const softOutfit = !cast.outfitId || SOFT_OUTFIT.test(cast.outfitId)
+      || /stage_gloss|chrome_candy/.test(cast.outfitId || '');
+    if (cast.kind === 'fauna') cast.kind = vocalFocus ? 'figure_lone' : 'crowd_ghosts';
+    const ashPrefer = (sectionType === 'breakdown' || sectionType === 'outro' || sectionType === 'drop');
+    if (pinHard) {
+      if (!CHAOS_ARCH.has(cast.archetype) || softArch
+          || cast.archetype === 'pastoral_walker' || cast.archetype === 'nature_fauna'
+          || cast.archetype === 'fg_performer') {
+        cast.archetype = ashPrefer ? 'ash_survivor' : 'chaos_fracture';
+      }
+      if (softChar || SOFT_CHAR.test(cast.characterId || '')
+          || /mic_stand|path_walker|meadow|lake_shore|autumn_road|heal_hands|hooded_pilgrim/.test(cast.characterId || '')) {
+        cast.characterId = cast.archetype === 'ash_survivor' ? 'smoke_stander' : 'scatter_runners';
+      }
+      if (softOutfit || SOFT_OUTFIT.test(cast.outfitId || '')
+          || /linen|moss|stage_gloss|chrome_candy|water_gloss|aisle_linen/.test(cast.outfitId || '')) {
+        cast.outfitId = cast.archetype === 'ash_survivor' ? 'ember_coat' : 'fracture_rag';
+      }
+    } else if (softArch || cast.archetype === 'pastoral_walker' || cast.archetype === 'nature_fauna') {
+      cast.archetype = ashPrefer
+        ? 'ash_survivor'
+        : (vocalFocus && (sectionType === 'verse' || sectionType === 'pre' || sectionType === 'intro')
+          ? 'fg_performer'
+          : 'chaos_fracture');
+      if (softChar || SOFT_CHAR.test(cast.characterId || '')) {
+        cast.characterId = cast.archetype === 'ash_survivor' ? 'smoke_stander'
+          : (cast.archetype === 'fg_performer' ? 'mic_stand_lead' : 'scatter_runners');
+      }
+      if (softOutfit || SOFT_OUTFIT.test(cast.outfitId || '')) {
+        cast.outfitId = cast.archetype === 'ash_survivor' ? 'ember_coat' : 'fracture_rag';
+      }
+      if (cast.archetype === 'fg_performer' && SOFT_OUTFIT.test(cast.outfitId || '')) {
+        cast.outfitId = 'industrial_hazard';
+      }
     }
   }
 
@@ -1562,12 +1614,25 @@ export function ensureCastPresence(cast, opts = {}) {
       : sparseMood ? 'close_confessor'
         : (L === 'warm' ? 'rain_highway_runner' : (L === 'tense' ? 'doorway_pause' : 'path_walker_dawn'))
   );
-  cast.archetype = (cast.archetype === 'nature_fauna' || !cast.archetype)
+  // Never resurrect soft defaults under aggressive pin
+  if (aggressive && SOFT_CHAR.test(cast.characterId || '')) {
+    cast.characterId = 'scatter_runners';
+  }
+  cast.archetype = (cast.archetype === 'nature_fauna' || !cast.archetype || (aggressive && SOFT_ARCH.test(cast.archetype)))
     ? (aggressive ? 'chaos_fracture' : sparseMood ? 'spoken_intimate' : (L === 'warm' ? 'neon_runner' : 'fg_performer'))
     : cast.archetype;
+  // HOLD-0306 every-frame: pinHard clamps WHO to ash/chaos only
+  if (pinHard && !CHAOS_ARCH.has(cast.archetype)) {
+    cast.archetype = (sectionType === 'breakdown' || sectionType === 'outro' || sectionType === 'drop')
+      ? 'ash_survivor' : 'chaos_fracture';
+    if (!cast.characterId || SOFT_CHAR.test(cast.characterId) || cast.archetype === 'fg_performer'
+        || /mic_stand|path_walker|meadow/.test(cast.characterId || '')) {
+      cast.characterId = cast.archetype === 'ash_survivor' ? 'smoke_stander' : 'scatter_runners';
+    }
+  }
   // Real outfit from vibe+archetype (not neon-only stage_gloss default)
   cast.outfitId = _resolveOutfitId(cast, { speechLike, vibeFamily: aggressive ? 'chaotic' : vibeFamily, sectionType });
-  if (aggressive && (/linen_dawn|moss_trail|stage_gloss|chrome_candy|water_gloss/.test(cast.outfitId || ''))) {
+  if (aggressive && (/linen_dawn|moss_trail|stage_gloss|chrome_candy|water_gloss|aisle_linen/.test(cast.outfitId || '') || SOFT_OUTFIT.test(cast.outfitId || ''))) {
     cast.outfitId = 'fracture_rag';
   }
   const readableStyle = _readableStyleForOutfit(
@@ -1633,6 +1698,40 @@ export function ensureCastPresence(cast, opts = {}) {
   hub.kind = (hub.kind && hub.kind !== 'none' && hub.kind !== 'fauna')
     ? hub.kind
     : (cast.kind || 'traveler');
+  // HOLD-0255/0306 scrub: aggressive pin never leaves soft pastoral on hub/members
+  if (aggressive) {
+    const softCharRe = /^(path_walker_dawn|meadow_wanderer|lake_shore_figure|autumn_road_traveler|heal_hands_open|hooded_pilgrim|crane_dusk|herd_silhouette|fish_motes|songbird_pair|stag_fog|butterflies_wash|mic_stand_lead)$/;
+    const softOutfitRe = /^(linen_dawn|moss_trail|aisle_linen|water_gloss|stage_gloss|chrome_candy)$/;
+    const softArchRe = /^(pastoral_walker|nature_fauna|meadow_wanderer|sacred_solitary)$/;
+    if (pinHard && !CHAOS_ARCH.has(hub.archetype || '')) {
+      hub.archetype = cast.archetype || 'chaos_fracture';
+      hub.characterId = cast.characterId || 'scatter_runners';
+      hub.outfitId = cast.outfitId || 'fracture_rag';
+    }
+    if (softArchRe.test(hub.archetype || '') || softCharRe.test(hub.characterId || '')) {
+      hub.archetype = cast.archetype || 'chaos_fracture';
+      hub.characterId = cast.characterId || 'scatter_runners';
+    }
+    if (softOutfitRe.test(hub.outfitId || '') || softCharRe.test(hub.characterId || '')) {
+      hub.outfitId = cast.outfitId || 'fracture_rag';
+      hub.characterId = cast.characterId || 'scatter_runners';
+    }
+    if (hub.kind === 'fauna') hub.kind = cast.kind || 'crowd_ghosts';
+    for (const m of members) {
+      if (!m) continue;
+      if (pinHard && !CHAOS_ARCH.has(m.archetype || '')) {
+        m.archetype = hub.archetype;
+        m.characterId = hub.characterId;
+        m.outfitId = hub.outfitId;
+      }
+      if (softCharRe.test(m.characterId || '') || softArchRe.test(m.archetype || '')) {
+        m.characterId = hub.characterId;
+        m.archetype = hub.archetype;
+      }
+      if (softOutfitRe.test(m.outfitId || '')) m.outfitId = hub.outfitId;
+      if (m.kind === 'fauna') m.kind = hub.kind;
+    }
+  }
   hub.style = readableStyle;
   hub.placement = 'foreground';
   hub.scale = Math.max(hubScale, _numericScale(hub.scale, 0));

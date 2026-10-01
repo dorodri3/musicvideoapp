@@ -292,7 +292,7 @@ export class Controls {
   updateHud(info) {
     const el = this.root.getElementById('hud-info');
     if (!el || !info) return;
-    el.textContent = [
+    const base = [
       info.section || '',
       info.preset || '',
       info.concept || '',
@@ -300,5 +300,40 @@ export class Controls {
       info.event || '',
       info.fps ? `${info.fps}fps` : ''
     ].filter(Boolean).join(' · ');
+    // HOLD-0321 proof HUD (?v=cohere6 / ?debug=hardlock / settings)
+    if (info.proof) {
+      const bits = [
+        `hardOnly=${info.hardOnly ? 1 : 0}`,
+        `preset=${info.preset || '?'}`,
+        `pack=${info.packFamily || '?'}`,
+        `latchMs=${info.hardLatchMsLeft ?? 0}`,
+        `pin=${info.pinArmed ? 1 : 0}`,
+        `martial=${(info.martial || info.martialHeat) ? 1 : 0}`,
+        `orchM=${info.orchestralMartial ? 1 : 0}`,
+        `forbidP=${info.forbidPastoral ? 1 : 0}`,
+        `aggLock=${info.aggressionLock ? 1 : 0}`
+      ];
+      el.textContent = `${base} | HARD ${bits.join(' ')}`;
+      el.classList.add('hud-proof');
+      // Keep proof visible even when overlay chrome fades
+      el.style.opacity = '1';
+      try {
+        if (typeof globalThis !== 'undefined') {
+          globalThis.__LS_HARD__ = info.hardHud || {
+            hardOnly: !!info.hardOnly,
+            preset: info.preset,
+            packFamily: info.packFamily,
+            hardLatchMsLeft: info.hardLatchMsLeft,
+            pinArmed: !!info.pinArmed,
+            martialHeat: !!info.martialHeat,
+            orchestralMartial: !!info.orchestralMartial
+          };
+        }
+      } catch (_) { /* soft */ }
+    } else {
+      el.textContent = base;
+      el.classList.remove('hud-proof');
+      el.style.opacity = '';
+    }
   }
 }
