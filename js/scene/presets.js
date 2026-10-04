@@ -2245,8 +2245,39 @@ function applyHardContrastVeil(ctx, w, h, presetId) {
 
 export function drawPreset(id, ctx, w, h, state) {
   let resolved = PRESET_ID_ALIASES[id] || id;
-  const st = state || {};
-  const d = st.directive || {};
+  const stIn = state || {};
+  const d = stIn.directive || {};
+  // P0 novideo2: never feed NaN into addColorStop / rgb() — permanent black canvas
+  const n0 = (v) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const emoIn = stIn.emotion || {};
+  const audIn = stIn.audio || {};
+  const emotion = {
+    ...emoIn,
+    hope: n0(emoIn.hope),
+    aggression: n0(emoIn.aggression),
+    darkness: n0(emoIn.darkness),
+    valence: n0(emoIn.valence),
+    arousal: n0(emoIn.arousal),
+    tension: n0(emoIn.tension)
+  };
+  const audio = {
+    ...audIn,
+    bass: n0(audIn.bass),
+    mid: n0(audIn.mid),
+    treble: n0(audIn.treble),
+    energy: n0(audIn.energy),
+    onset: n0(audIn.onset),
+    rms: n0(audIn.rms),
+    peak: n0(audIn.peak),
+    flux: n0(audIn.flux),
+    build: n0(audIn.build),
+    drop: n0(audIn.drop)
+  };
+  const intensity = n0(stIn.intensity != null ? stIn.intensity : 0.5);
+  const st = { ...stIn, emotion, audio, intensity };
   // HOLD-0321/0330/0338: hard latch → strip pastoral; softClear NEVER redirects to metal_hall
   const softClearPaint = !!(st.softClear || d.softClear || d.hardHud?.softClear
     || d.hardHud?.softBedGuard);
@@ -2261,9 +2292,27 @@ export function drawPreset(id, ctx, w, h, state) {
     resolved = 'metal_hall';
   }
   try {
-    const fn = PRESETS[resolved] || PRESETS.white_void;
-    fn(ctx, w, h, state);
-    if (hardPaint) applyHardContrastVeil(ctx, w, h, resolved);
+    try {
+      const fn = PRESETS[resolved] || PRESETS.white_void;
+      fn(ctx, w, h, st);
+      if (hardPaint) applyHardContrastVeil(ctx, w, h, resolved);
+    } catch (err) {
+      // P0 novideo2: one bad preset must not leave the frame black after Renderer fillRect
+      try { console.warn('[light-show] drawPreset failed:', resolved, err); } catch (_) { /* soft */ }
+      try {
+        const fallbackId = hardPaint ? 'metal_hall' : 'white_void';
+        const fb = PRESETS[fallbackId] || PRESETS.white_void;
+        fb(ctx, w, h, st);
+        if (hardPaint) applyHardContrastVeil(ctx, w, h, fallbackId);
+      } catch (err2) {
+        try { console.warn('[light-show] drawPreset fallback failed', err2); } catch (_) { /* soft */ }
+        // last resort: solid fill so frame is never empty black-from-throw
+        try {
+          ctx.fillStyle = hardPaint ? '#1a0808' : '#d8dce8';
+          ctx.fillRect(0, 0, w, h);
+        } catch (_) { /* soft */ }
+      }
+    }
   } finally {
     _forbidPastoralFauna = false;
   }

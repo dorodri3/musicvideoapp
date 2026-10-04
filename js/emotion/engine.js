@@ -151,6 +151,8 @@ export class EmotionEngine {
   }
 
   _clamp(v) {
+    // P0 novideo2: NaN must not stick in hope/aggression forever (poisons presets)
+    if (!Number.isFinite(v)) return 0;
     return Math.max(-1, Math.min(1, v));
   }
 

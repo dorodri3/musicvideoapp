@@ -380,3 +380,8 @@ v2-audio-softclear-kickfalse-20261001-194000 — Audio Pulse: softClear wins on 
 - Clash HOLD-0321 intact (martial/orchMartial/true pin → HARD_LOCK). Cache ?v=cohere6. Do NOT git push.
 - Pre-ckpt: v2-worlds-pre-hold-0338-20261001-034039
 v2-audio-softclear-no-sticky-agg-20261001-194823 — Audio Pulse: softClear ignores sticky aggression/densFast/kick; clears pin (HOLD-0346 / cohere7)
+
+2026-10-04 03:56 PT — v2-polish-overlaychips1-20261004-0356 — Phone polish QA-20261004-0354:
+- Show overlay gets the same 9 mood/style chips (setup still has them). Tap during playback calls existing setStyles without Exit.
+- Chips live in #show-overlay .overlay-chrome .overlay-styles, above Fullscreen/Exit; sync .active across both chip sets.
+- Cache ?v=overlaychips1 (css, main.js, controls.js, scenePlan.js import). Not stylechips1. Soft-clip and presets untouched. No git push.

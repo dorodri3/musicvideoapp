@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Light Show — Imagined Movie</title>
-  <link rel="stylesheet" href="css/style.css?v=cohere7" />
+  <link rel="stylesheet" href="css/style.css?v=overlaychips1" />
 </head>
 <body>
   <div id="setup-screen">
@@ -117,13 +117,26 @@
     <div id="show-prompt" class="hidden" role="status" aria-live="polite"></div>
     <div id="show-overlay">
       <div id="hud-info"></div>
-      <div class="overlay-btns">
-        <button type="button" id="btn-fullscreen">Fullscreen</button>
-        <button type="button" id="btn-exit">Exit</button>
+      <div class="overlay-chrome">
+        <div class="overlay-styles" role="group" aria-label="Mood and style">
+          <button type="button" data-style="realistic">Realistic</button>
+          <button type="button" data-style="cinematic" class="active">Cinematic</button>
+          <button type="button" data-style="surreal">Surreal</button>
+          <button type="button" data-style="dreamlike" class="active">Dreamlike</button>
+          <button type="button" data-style="mythological">Mythological</button>
+          <button type="button" data-style="sci-fi">Sci-Fi</button>
+          <button type="button" data-style="horror">Horror</button>
+          <button type="button" data-style="abstract">Abstract</button>
+          <button type="button" data-style="epic">Epic</button>
+        </div>
+        <div class="overlay-btns">
+          <button type="button" id="btn-fullscreen">Fullscreen</button>
+          <button type="button" id="btn-exit">Exit</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <script type="module" src="js/main.js?v=cohere7"></script>
+  <script type="module" src="js/main.js?v=overlaychips1"></script>
 </body>
 </html>

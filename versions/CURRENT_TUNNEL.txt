@@ -1,3 +1,3 @@
-https://verse-refers-tolerance-villa.trycloudflare.com
+https://lion-frequency-laser-prove.trycloudflare.com
 Local: http://127.0.0.1:8765/
-Live SoT: 2026-10-01 ~2:51 AM PT (verse-refers; tunnel health restart, http2)
+Live SoT: 2026-10-04 ~3:32 AM PT (lion-frequency-laser-prove; tunnel health restart, quic)

@@ -286,6 +286,44 @@ button.primary:disabled,
   opacity: 1;
 }
 
+
+/* QA-20261004-0354: mood chips on show chrome — same fade/hit as Fullscreen/Exit */
+.overlay-chrome {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin-left: auto;
+  max-width: 100%;
+  min-width: 0;
+  pointer-events: none;
+}
+.overlay-styles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: min(100%, 520px);
+  opacity: 0.45;
+  pointer-events: auto;
+  transition: opacity 0.4s;
+}
+#show-overlay.visible .overlay-styles {
+  opacity: 1;
+}
+.overlay-styles button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 4px 8px;
+  font-size: 0.68rem;
+  line-height: 1.05;
+  border-radius: 6px;
+  touch-action: manipulation;
+}
+#show-screen.immersive #show-overlay:not(.visible) .overlay-styles {
+  opacity: 0.55;
+}
+
 /* Always-reachable Exit/Fullscreen when chrome is "hidden" */
 .overlay-btns {
   display: flex;

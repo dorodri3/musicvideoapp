@@ -3,11 +3,11 @@
  * Roles animate HOW the world moves; lyrics direct WHAT world.
  * Prefer audio.roles || audio.instruments (see js/audio/ROLES.md).
  */
-import { ContinuityEngine } from '../scene/continuity.js?v=cohere7';
+import { ContinuityEngine } from '../scene/continuity.js?v=novideo2';
 import { CameraSystem } from '../camera/system.js';
-import { LightingSystem } from '../lighting/system.js?v=cohere7';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=cohere7';
-import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=cohere7';
+import { LightingSystem } from '../lighting/system.js?v=novideo2';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=novideo2';
+import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=novideo2';
 import { getMotionComfort } from '../a11y/motionPrefs.js';
 
 
@@ -27,7 +27,7 @@ function drawDebugHudImpl(ctx, w, h, directive, audio) {
   const preset = directive?.preset || hud.preset || '—';
   const hardIds = hud.hardLockIds || ['metal_hall', 'reality_fracture', 'apocalyptic_warzone', 'red_void', 'storm'];
   const lines = [
-    'LS DEBUG cohere7',
+    'LS DEBUG novideo2',
     `pinArmed ${!!(vibe.pinArmed || moment.pinArmed || hud.pinArmed)}  martial ${!!(vibe.martial || moment.martial || hud.martial)}`,
     `orchMart ${!!(vibe.orchestralMartial || moment.orchestralMartial || hud.orchestralMartial)}  softClear ${!!(vibe.softClear || moment.softClear)}`,
     `forbidPast ${!!(directive?.forbidPastoral || vibe.forbidPastoral || moment.forbidPastoral)}  aggLock ${!!(directive?.aggressionLock || vibe.aggressionLock || moment.aggressionLock)}`,
@@ -64,7 +64,7 @@ function drawDebugHudImpl(ctx, w, h, directive, audio) {
       try {
         ctx.fillStyle = '#7CFFB2';
         ctx.font = '12px monospace';
-        ctx.fillText('LS DEBUG cohere7 (fallback)', 16, 20);
+        ctx.fillText('LS DEBUG novideo2 (fallback)', 16, 20);
       } catch (__) { /* soft */ }
     }
     try { ctx.restore(); } catch (_) { /* soft */ }
@@ -130,8 +130,15 @@ export class Renderer {
   _resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2) * this.quality;
     const rect = this.canvas.getBoundingClientRect();
-    const w = Math.max(1, Math.floor(rect.width * dpr));
-    const h = Math.max(1, Math.floor(rect.height * dpr));
+    // P0 novideo2: after display:none→show, rect can be 0 for a frame → 1×1 black stretch
+    let cssW = rect.width;
+    let cssH = rect.height;
+    if (cssW < 2 || cssH < 2) {
+      cssW = window.innerWidth || document.documentElement?.clientWidth || 1;
+      cssH = window.innerHeight || document.documentElement?.clientHeight || 1;
+    }
+    const w = Math.max(1, Math.floor(cssW * dpr));
+    const h = Math.max(1, Math.floor(cssH * dpr));
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;

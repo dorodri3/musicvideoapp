@@ -5,16 +5,16 @@
  * Flow: identify song → fetch lyrics → plan from lyrics → live lyric concepts direct scenery;
  * instruments animate how the world moves.
  */
-import { AudioAnalyzer } from './audio/analyzer.js?v=cohere7';
+import { AudioAnalyzer } from './audio/analyzer.js?v=novideo2';
 import { VocalEstimate } from './audio/vocalEstimate.js';
 import { LyricsParser } from './lyrics/parser.js';
 import { SemanticExtractor } from './lyrics/semantic.js';
 import { LyricsAlignment } from './lyrics/alignment.js';
 import { StructureAnalyzer } from './structure/analyzer.js';
 import { EmotionEngine } from './emotion/engine.js';
-import { ScenePlanner } from './director/scenePlan.js?v=cohere7';
-import { Renderer } from './viz/renderer.js?v=cohere7';
-import { Controls } from './ui/controls.js';
+import { ScenePlanner } from './director/scenePlan.js?v=overlaychips1';
+import { Renderer } from './viz/renderer.js?v=novideo2';
+import { Controls } from './ui/controls.js?v=overlaychips1';
 import { SongIdentity } from './song/identity.js';
 
 class LightShowApp {
@@ -63,6 +63,17 @@ class LightShowApp {
       this._onSource(s);
     });
     this.controls.on('generate', (settings) => this._generate(settings));
+    // HOLD-stylechips: chip clicks update the running plan, not only the Generate snapshot.
+    document.querySelectorAll('[data-style]').forEach((el) => {
+      el.addEventListener('click', () => {
+        // Setup + show-overlay chips share data-style; dedupe so twins don't double-count.
+        const styles = [...new Set(
+          [...document.querySelectorAll('[data-style].active')].map(n => n.dataset.style)
+        )];
+        if (this.settings) this.settings.styles = styles;
+        this.director.setStyles(styles);
+      });
+    });
     this.controls.on('exit', () => this._exitShow());
     this.controls.on('fullscreen', () => this._toggleFullscreen());
     this.controls.on('gesture', () => this._onUserGesture());

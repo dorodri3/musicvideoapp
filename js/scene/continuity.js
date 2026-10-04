@@ -7,7 +7,7 @@
  * must NOT paint at full opacity mid-morph (pale B3). Keep hard from + dense
  * storm veil α≥0.45; soft Night Owl morph untouched when unlocked.
  */
-import { drawPreset } from './presets.js?v=cohere7';
+import { drawPreset } from './presets.js?v=novideo2';
 
 /** Congruent with Worlds HARD_LOCK_PRESETS — Visual morph allowlist under pin */
 const HARD_LOCK_IDS = new Set([

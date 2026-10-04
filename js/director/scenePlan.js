@@ -15,19 +15,19 @@
  * lyricStickExpire / sectionChangeId: when section TYPE or chorus.repeat changes,
  * Visual Engine / Lyrics Brain clear sticky last-good phrase (Quality gap 5).
  */
-import { NarrativeState } from './narrativeState.js?v=cohere7';
+import { NarrativeState } from './narrativeState.js?v=novideo2';
 import { VariationController } from './variation.js';
 import { ScaleDirector } from './scale.js';
-import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=cohere7';
-import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=cohere7';
-import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=cohere7';
+import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=novideo2';
+import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=novideo2';
+import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=novideo2';
 import {
   dominantVibe, vibePackFamily, vibeLeadPresets, vibeForbiddenPresets, genreLeadPresets,
   genreForbiddenPresets, ladderLeadPresets, resolveLadder, isAggressiveVibe, ladderStepChanged,
   inferSpeechLikeFromRoles, readVibe, readMoment, STICKY_MS, PIN_HOLD_MS, ESCAPE_MS, AGGRESSION_THRESH,
   hardLockPresets, isHardLockPreset, softForbiddenUnderHard, isSoftForbiddenUnderHard
-} from './vibeCast.js?v=cohere7';
-import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=cohere7';
+} from './vibeCast.js?v=novideo2';
+import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=novideo2';
 
 const SECTION_INTENTS = {
   intro: {
@@ -106,6 +106,28 @@ const KNOWN_PRESETS = new Set([
   'soul_room', 'club_floor', 'metal_hall', 'jazz_club', 'orchestral_hall',
   'latin_night', 'gospel_light', 'hiphop_block', 'country_porch', 'ambient_field', 'stage_pop'
 ]);
+
+/**
+ * Mood-chip → world bundles (real preset ids).
+ * Order is the priority order. Hard ids are included so hardOnly can keep
+ * a style-matching HARD_LOCK world first; soft tick drops those so a chip
+ * never forces metal_hall / fracture onto Night Owl.
+ * realistic never lists reality_fracture or red_void.
+ */
+const STYLE_PRESET_BUNDLES = {
+  realistic: ['meadow_fauna', 'country_porch', 'forest', 'cozy_autumn'],
+  cinematic: ['rainy_city', 'ancient_ruins', 'ocean', 'empty_highway', 'storm', 'apocalyptic_warzone', 'metal_hall'],
+  surreal: ['endless_staircase', 'white_void', 'candy_happy', 'dream_clouds', 'reality_fracture', 'red_void'],
+  dreamlike: ['dream_clouds', 'misty_lake', 'space', 'ocean', 'reality_fracture', 'storm'],
+  mythological: ['ancient_ruins', 'cathedral_space', 'ocean', 'snow', 'storm', 'apocalyptic_warzone'],
+  'sci-fi': ['space', 'futuristic_city', 'neon_highway', 'industrial_tunnel', 'metal_hall', 'reality_fracture'],
+  horror: ['dark_sparse', 'endless_staircase', 'red_void', 'apocalyptic_warzone', 'storm'],
+  abstract: ['white_void', 'ambient_field', 'led_wall', 'reality_fracture', 'red_void'],
+  epic: ['apocalyptic_warzone', 'cathedral_space', 'space', 'orchestral_hall', 'storm', 'metal_hall', 'red_void']
+};
+/** realistic has no fracture/void — hard fallback stays grounded (storm first, never fracture/void). */
+const REALISTIC_HARD_FALLBACK = ['storm', 'metal_hall', 'apocalyptic_warzone'];
+const CINEMATIC_HOLD_MS = 30000;
 
 const PRESET_ALIASES = {
   desert: 'burning_desert',
@@ -249,6 +271,10 @@ export class ScenePlanner {
     this._lastTrackKey = null;
     this._hardHud = null;
     this._pinAsserted = false;
+    /** HOLD-stylechips: mood chip holds one world until soft↔hard. */
+    this._styleHoldUntil = 0;
+    this._styleHeldPreset = null;
+    this._stylePolarity = null;
   }
 
   /**
@@ -296,6 +322,9 @@ export class ScenePlanner {
     this._lastTrackKey = null;
     this._hardHud = null;
     this._pinAsserted = false;
+    this._styleHoldUntil = 0;
+    this._styleHeldPreset = null;
+    this._stylePolarity = null;
 
     // Peaceful/calm or nature language must seed the nature world before roulette.
     const moodKey = String(mood || '').toLowerCase();
@@ -608,11 +637,12 @@ export class ScenePlanner {
     list.push(...defaults);
 
     const styleList = Array.isArray(styles) ? styles : [];
-    if (styleList.includes('horror')) list.unshift('dark_sparse', 'red_void', 'apocalyptic_warzone');
-    if (styleList.includes('sci-fi') && ladderKey !== 'aggressive' && ladderKey !== 'peaceful') {
-      list.unshift('futuristic_city', 'space');
+    // Earlier chips win: unshift last→first so styles[0] sits at the front.
+    // Same pattern as the old horror unshift, now for all 9 chips.
+    for (let si = styleList.length - 1; si >= 0; si--) {
+      const bundle = STYLE_PRESET_BUNDLES[String(styleList[si] || '').trim().toLowerCase()];
+      if (bundle && bundle.length) list.unshift(...bundle);
     }
-    if (styleList.includes('mythological')) list.unshift('ancient_ruins', 'cathedral_space');
 
     const hardPlan = !!(dom?.forbidPastoral || dom?.aggressionLock
       || String(dom?.ladder || '').toLowerCase() === 'aggressive'
@@ -1236,17 +1266,22 @@ export class ScenePlanner {
         this._hardLatchUntil = Math.max(this._hardLatchUntil || 0, now + PIN_HOLD_MS);
         // HOLD-0314: rewrite soft section presets → HARD_LOCK (sp never re-asks forest/deer)
         if (this.plan?.sectionPlans) {
-          const hard = hardLockPresets();
+          // HOLD-stylechips: hard rewrite keeps style-matching HARD_LOCK ids first.
+          const styled = this._styleBundle(true);
+          const hard = styled.length ? styled : hardLockPresets();
           for (let i = 0; i < this.plan.sectionPlans.length; i++) {
             const row = this.plan.sectionPlans[i];
             if (!isHardLockPreset(row.preset)) {
               row.preset = hard[i % hard.length];
               row.alternatePresets = hard.slice();
+            } else if (styled.length) {
+              row.alternatePresets = styled.slice();
             }
           }
         }
         if (!isHardLockPreset(this.currentPreset)) {
-          const h0 = hardLockPresets()[0];
+          const styledNow = this._styleBundle(true);
+          const h0 = (styledNow.length ? styledNow : hardLockPresets())[0];
           this.variation.recordScene(h0, now);
           // HOLD-0321: never morph FROM soft — Continuity would paint forest/deer
           this.transition = {
@@ -1336,6 +1371,9 @@ export class ScenePlanner {
     const forceSoftClear = !martialFlag && !genreHard && energyN < 0.4
       && harshN < 0.25
       && !/soundtrack|classical/.test(genreFamLive);
+    // HOLD-0346 rename: softEnergyBed → forceSoftClear; keep alias for hardHud / QA proof
+    // (pinsoft-override used softEnergyBed; force-soft forgot the alias → ReferenceError black canvas)
+    const softEnergyBed = forceSoftClear;
 
     // True martial / harsh — NOT soft energy+kick alone (Night Owl bass saturates kick)
     // HOLD-0346: sticky pinArmed / floored agg MUST NOT count as martialHeat under forceSoft
@@ -1595,7 +1633,8 @@ export class ScenePlanner {
     const packLatched = now < (this._packHoldUntil || 0)
       && (hardOnly ? isHardLockPreset(this.currentPreset) : !vibeForbidden.has(this.currentPreset));
 
-    if (liveLocked && !physicalSection && this._liveSteerPreset && !vibeForbidden.has(this._liveSteerPreset)) {
+    const stylePinned = this._activeStyles().length > 0;
+    if (!stylePinned && liveLocked && !physicalSection && this._liveSteerPreset && !vibeForbidden.has(this._liveSteerPreset)) {
       // Lyric world wins until lock expires — cast/prop may still intensify
       preset = this._liveSteerPreset;
       this.currentPreset = preset;
@@ -1628,7 +1667,11 @@ export class ScenePlanner {
           ).filter(p => !vibeForbidden.has(p));
           if (!candidates.length && spOk) candidates = [sp.preset];
           if (hardOnly) {
-            candidates = hardLockPresets().slice();
+            const styledHard = this._styleBundle(true);
+            candidates = (styledHard.length ? styledHard : hardLockPresets()).slice();
+          } else if (stylePinned) {
+            const styledSoft = this._styleBundle(false);
+            if (styledSoft.length) candidates = styledSoft.slice();
           }
           const ordered = this._orderByContinuity(candidates, this.currentPreset, secType);
           preset = ordered.find(p => hardOnly ? isHardLockPreset(p) : !vibeForbidden.has(p))
@@ -1720,6 +1763,12 @@ export class ScenePlanner {
         }
       }
       this.narrative.setPackFamily('chaos');
+    }
+    // HOLD-stylechips: after the hard assert, a selected chip still wins among HARD_LOCK
+    // ids (or soft worlds when hardOnly is false). Lyric hops cannot stick.
+    this._enforceStyleWorld(now, !!hardOnly);
+    if (hardOnly && this.currentPreset && !isHardLockPreset(this.currentPreset)) {
+      this.currentPreset = hardLockPresets()[0];
     }
     preset = this.currentPreset;
 
@@ -2117,6 +2166,12 @@ export class ScenePlanner {
     }
     this._lastPhraseKey = key;
 
+    // HOLD-stylechips: mood chip holds the world. Props/cast above still update.
+    // Do not hop presets on each lyric line (~2.6s). Soft↔hard is tick()'s job.
+    if (this._activeStyles().length) {
+      return concept;
+    }
+
     // Mid-chorus: allow cast/prop intensify only — do not swap world under lock
     if (secType === 'chorus' && now < this._liveSteerUntil) {
       return concept;
@@ -2233,6 +2288,170 @@ export class ScenePlanner {
     this._liveSteerUntil = now + (physical && lyricSteer < 0.45 ? 1200 : lockMs);
 
     return concept;
+  }
+
+  /**
+   * Active mood chips on the running plan (normalized, known chips only).
+   * @returns {string[]}
+   */
+  _activeStyles() {
+    const raw = this.plan?.styles;
+    if (raw == null) return [];
+    const arr = Array.isArray(raw) ? raw : String(raw).split(/[,|]/);
+    const out = [];
+    const seen = new Set();
+    for (const item of arr) {
+      const id = String(item || '').trim().toLowerCase();
+      if (!id || seen.has(id) || !STYLE_PRESET_BUNDLES[id]) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
+  }
+
+  /**
+   * Preset ids a chip bundle forces, filtered for polarity.
+   * hardOnly → HARD_LOCK ids that fit the style (else allowlist; realistic skips fracture/void).
+   * soft → grounded/soft worlds only; hard worlds are not forced (no metal_hall on Night Owl).
+   * @param {boolean} hardOnly
+   * @returns {string[]}
+   */
+  _styleBundle(hardOnly) {
+    const styles = this._activeStyles();
+    if (!styles.length) return [];
+    const merged = [];
+    for (const id of styles) merged.push(...STYLE_PRESET_BUNDLES[id]);
+    const seen = new Set();
+    const uniq = [];
+    for (const id of merged) {
+      const n = this._normalizePreset(id);
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      uniq.push(n);
+    }
+    if (hardOnly) {
+      const fit = uniq.filter(p => isHardLockPreset(p));
+      if (fit.length) return fit;
+      if (styles.every(s => s === 'realistic')) return REALISTIC_HARD_FALLBACK.slice();
+      return hardLockPresets();
+    }
+    const soft = uniq.filter(p => !isHardLockPreset(p));
+    return soft.length ? soft : uniq.filter(p => p !== 'metal_hall');
+  }
+
+  _styleHoldMs(styles) {
+    return (styles || this._activeStyles()).includes('cinematic') ? CINEMATIC_HOLD_MS : PIN_HOLD_MS;
+  }
+
+  /**
+   * Put the active style bundle on the running plan and hold that world.
+   * Hold breaks only when polarity flips (soft↔hard) or the chip set changes
+   * (setStyles clears the hold). Lyric hops do not.
+   * @param {number} now
+   * @param {boolean} hardOnly
+   */
+  _enforceStyleWorld(now, hardOnly) {
+    const styles = this._activeStyles();
+    const polarity = hardOnly ? 'hard' : 'soft';
+    if (!styles.length) {
+      this._stylePolarity = polarity;
+      return;
+    }
+    const bundle = this._styleBundle(!!hardOnly);
+    if (!bundle.length) return;
+    const flip = this._stylePolarity != null && this._stylePolarity !== polarity;
+    this._stylePolarity = polarity;
+    const holdMs = this._styleHoldMs(styles);
+
+    if (this.plan?.sectionPlans?.length) {
+      for (let i = 0; i < this.plan.sectionPlans.length; i++) {
+        const row = this.plan.sectionPlans[i];
+        if (!bundle.includes(row.preset)) row.preset = bundle[i % bundle.length];
+        const alts = bundle.filter(p => p !== row.preset);
+        row.alternatePresets = alts.length ? alts : bundle.slice();
+      }
+    }
+
+    const heldOk = !!(this._styleHeldPreset
+      && bundle.includes(this._styleHeldPreset)
+      && (hardOnly ? isHardLockPreset(this._styleHeldPreset) : !isHardLockPreset(this._styleHeldPreset)));
+    const holdLive = !flip && heldOk && now < (this._styleHoldUntil || 0);
+    if (holdLive) {
+      if (this.currentPreset !== this._styleHeldPreset) {
+        const fromOk = hardOnly
+          ? isHardLockPreset(this.currentPreset)
+          : (this.currentPreset && !isHardLockPreset(this.currentPreset));
+        this.transition = {
+          from: fromOk ? this.currentPreset : this._styleHeldPreset,
+          to: this._styleHeldPreset,
+          start: now,
+          duration: hardOnly ? 120 : 180,
+          mode: 'cut'
+        };
+        this.currentPreset = this._styleHeldPreset;
+      }
+      this._liveSteerPreset = null;
+      this._liveSteerUntil = 0;
+      return;
+    }
+
+    const next = bundle[0];
+    if (next && next !== this.currentPreset) {
+      const fromOk = hardOnly
+        ? isHardLockPreset(this.currentPreset)
+        : (this.currentPreset && !isHardLockPreset(this.currentPreset));
+      this.transition = {
+        from: fromOk ? this.currentPreset : next,
+        to: next,
+        start: now,
+        duration: hardOnly ? 180 : 900,
+        mode: hardOnly ? 'cut' : 'morph'
+      };
+      try { this.variation.recordScene(next, now); } catch (_) { /* soft */ }
+      this.currentPreset = next;
+    }
+    this._styleHeldPreset = this.currentPreset;
+    this._styleHoldUntil = now + holdMs;
+    this._packHoldUntil = Math.max(this._packHoldUntil || 0, now + holdMs);
+    this._liveSteerPreset = null;
+    this._liveSteerUntil = 0;
+  }
+
+  /**
+   * Live mood-chip update. Does not wait for Generate.
+   * @param {string[]|string} styles
+   * @returns {string[]}
+   */
+  setStyles(styles) {
+    const arr = Array.isArray(styles) ? styles : (styles == null || styles === '' ? [] : String(styles).split(/[,|]/));
+    const list = [];
+    const seen = new Set();
+    for (const item of arr) {
+      const id = String(item || '').trim().toLowerCase();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      list.push(id);
+    }
+    if (!this.plan) {
+      this.plan = {
+        theme: '',
+        motifs: [],
+        palette: DEFAULT_PALETTES.cinematic,
+        styles: list,
+        fantasyText: '',
+        intensityMul: 1,
+        sectionPlans: [],
+        createdAt: Date.now()
+      };
+    } else {
+      this.plan.styles = list;
+    }
+    this._styleHoldUntil = 0;
+    this._styleHeldPreset = null;
+    const hardOnly = !!(this._hardHud && this._hardHud.hardOnly);
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    this._enforceStyleWorld(now, hardOnly);
+    return this.plan.styles;
   }
 
   getPlan() {

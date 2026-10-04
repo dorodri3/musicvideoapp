@@ -113,7 +113,12 @@ export class Controls {
 
     this.root.querySelectorAll('[data-style]').forEach(el => {
       el.addEventListener('click', () => {
-        el.classList.toggle('active');
+        const style = el.dataset.style;
+        const next = !el.classList.contains('active');
+        // Keep setup-screen and show-overlay chips with the same value in sync.
+        this.root.querySelectorAll('[data-style]').forEach((n) => {
+          if (n.dataset.style === style) n.classList.toggle('active', next);
+        });
       });
     });
 
@@ -148,7 +153,7 @@ export class Controls {
     // Also catch taps on the prompt area / show screen chrome (prompt is pointer-events:none)
     if (showScreen) {
       showScreen.addEventListener('click', (e) => {
-        if (e.target?.closest?.('.overlay-btns')) return;
+        if (e.target?.closest?.('.overlay-btns, .overlay-styles')) return;
         this.emit('gesture');
       });
     }
@@ -162,7 +167,7 @@ export class Controls {
 
   getSettings() {
     const $ = (id) => this.root.getElementById(id);
-    const styles = [...this.root.querySelectorAll('[data-style].active')].map(el => el.dataset.style);
+    const styles = [...new Set([...this.root.querySelectorAll('[data-style].active')].map(el => el.dataset.style))];
     return {
       lyrics: $('lyrics-input')?.value || '',
       fantasy: $('fantasy-input')?.value || '',
