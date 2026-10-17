@@ -3,17 +3,18 @@
  * Roles animate HOW the world moves; lyrics direct WHAT world.
  * Prefer audio.roles || audio.instruments (see js/audio/ROLES.md).
  */
-import { ContinuityEngine } from '../scene/continuity.js?v=novideo2';
+import { ContinuityEngine } from '../scene/continuity.js?v=art1';
 import { CameraSystem } from '../camera/system.js';
-import { LightingSystem } from '../lighting/system.js?v=novideo2';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=novideo2';
-import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=novideo2';
+import { LightingSystem } from '../lighting/system.js?v=art1';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=art1';
+import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=art1';
 import { getMotionComfort } from '../a11y/motionPrefs.js';
+import { ArtPlates, drawHumanSilhouette } from './artPlates.js?v=art1';
 
 
 /** HOLD-0330: module-level HUD — never depends on prototype lookup (TypeError-proof). */
 function drawDebugHudImpl(ctx, w, h, directive, audio) {
-  let show = true;
+  let show = false;
   try {
     const q = (typeof location !== 'undefined' && location.search) ? location.search : '';
     if (/[?&]debug=0(?:&|$)/.test(q)) show = false;
@@ -76,6 +77,7 @@ export class Renderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.continuity = new ContinuityEngine();
+    this.art = new ArtPlates();
     this.camera = new CameraSystem();
     this.lighting = new LightingSystem();
     this.typography = new TypographySystem();
@@ -1079,18 +1081,22 @@ export class Renderer {
 
     const coherentTr = this._resolveCoherentTransition(directive, audio, this._vibeMatch);
     this.continuity.draw(ctx, w, h, state, coherentTr);
+    // art1: painted plate over procedural fallback (procedural bleeds through lightly)
+    const _artPreset = this._pickArtWorld((coherentTr && coherentTr.to && coherentTr.progress < 1) ? coherentTr.to : state.preset, directive, audio, t);
+    this._artOn = this.art.drawBg(ctx, w, h, _artPreset, state, !!getMotionComfort().reduceMotion);
+    if (this._artOn) this.art.drawFg(ctx, w, h, state);
 
     // Through-screen scenic travel (parallax/drift/sweep) — not a static postcard
-    this._drawScenicTravel(ctx, w, h, state, directive);
+    if (!this._artOn) this._drawScenicTravel(ctx, w, h, state, directive);
 
     // Motif props early; cast drawn AFTER typography so wash never covers figures
-    this._drawMotifProps(ctx, w, h, directive, state);
+    if (!this._artOn) this._drawMotifProps(ctx, w, h, directive, state);
 
     // Light vibe / speechLike hooks (scenic owns frame; minimal flash)
-    this._applyVibeHooks(ctx, w, h, directive, state);
+    if (!this._artOn) this._applyVibeHooks(ctx, w, h, directive, state);
 
     // Pads → sky fog wash
-    if (this._fog > 0.05) {
+    if (this._fog > 0.05 && !this._artOn) {
       const g = ctx.createLinearGradient(0, 0, 0, h * 0.55);
       g.addColorStop(0, `rgba(180,200,255,${this._fog * 0.42})`);
       g.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1116,7 +1122,7 @@ export class Renderer {
     }
 
     // Lead/vocalish → ONE soft beam (comfort: never wash whole canvas white)
-    if (this._beam > 0.08) {
+    if (this._beam > 0.08 && !this._artOn) {
       const ax = this._figureAnchor?.x ?? w * 0.5;
       const ay = this._figureAnchor?.y ?? h * 0.48;
       const beamCap = Math.min(0.55, this._beam);
@@ -1167,7 +1173,7 @@ export class Renderer {
     if (this._glitch > 0.12) {
       ctx.save();
       ctx.globalAlpha = this._glitch * 0.45;
-      const bars = Math.floor(8 * this.quality);
+      const bars = this._artOn ? 0 : Math.floor(8 * this.quality);
       for (let i = 0; i < bars; i++) {
         const y = Math.random() * h;
         ctx.fillStyle = Math.random() > 0.5 ? '#fff' : '#000';
@@ -1186,7 +1192,7 @@ export class Renderer {
       ctx.restore();
     }
 
-    if (directive?.motif && directive.motifAction) {
+    if (directive?.motif && directive.motifAction && !this._artOn) {
       this._drawMotif(ctx, w, h, directive.motif, directive.motifAction, state, directive);
     }
 
@@ -1204,7 +1210,9 @@ export class Renderer {
       ctx.fillRect(0, 0, w, h);
     }
 
+    if (this._artOn) { ctx.save(); ctx.globalAlpha = 0.18; }
     this.lighting.apply(ctx, w, h, light, directive?.palette, this.quality);
+    if (this._artOn) ctx.restore();
 
     // Typography — scenic; clear sticky on lyricStickExpire / sectionChangeId
     const stickExpire = !!(directive?.lyricStickExpire);
@@ -1258,6 +1266,47 @@ export class Renderer {
    * HOLD-0330: on-canvas proof HUD — delegates to module impl (prototype always present).
    * Default ON; ?debug=0 off; ?debug=1 forces on.
    */
+  /**
+   * art1: mood-true painted world. Soft songs never land in storm/warzone; hard songs never in meadows.
+   * Director preset wins when it already matches the mood; otherwise pick from the mood pool,
+   * rotating on section changes (and at least every ~28s) so the video travels.
+   */
+  _pickArtWorld(preset, directive, audio, t) {
+    const vm = this._vibeMatch || {};
+    let hard = !!(vm.hardLock || vm.hardHoldActive || vm.mode === 'chaos' || vm.forbidPastoral ||
+      directive?.forbidPastoral || directive?.hardOnly || (vm.aggression || 0) >= 0.55 || (vm.stickyAgg || 0) >= 0.55);
+    const HARD = ['storm', 'apocalyptic_warzone', 'metal_hall', 'red_void'];
+    const SOFT = ['misty_lake', 'dream_clouds', 'meadow_fauna', 'forest', 'space', 'rainy_city']; // soft → nature / dream first
+    const st = this._artPick || (this._artPick = { id: null, since: t, sec: null, hard, n: 0, acc: { n: 0, e: 0, on: 0, b: 0, tr: 0, agg: 0, fl: 0, ladA: 0 } });
+    const A = st.acc, au = audio || {};
+    const lad = (au.moment?.ladder || au.vibe?.moment?.ladder || '').toString();
+    A.n++; A.e += +au.energy || 0; A.on += +au.onset || 0; A.b += +au.bass || 0; A.tr += +au.treble || 0;
+    A.agg += +(au.vibe?.aggression ?? 0) || 0; A.fl += +(au.flux ?? au.spectralFlux ?? 0) || 0; A.ladA += lad === 'aggressive' ? 1 : 0;
+    // Song-level mood (renderer vibeMatch saturates to 'chaos' on soft songs — QA art1):
+    // long-run mean of analyzer vibe.aggression + share of 'aggressive' ladder frames.
+    if (A.n > 90) {
+      const mAgg = A.agg / A.n, mLad = A.ladA / A.n;
+      const songHard = st.songHard ? (mAgg > 0.5 || mLad > 0.5) : (mAgg > 0.62 || mLad > 0.62);
+      st.songHard = songHard;
+      hard = songHard;
+    } else {
+      hard = (+(au.vibe?.aggression ?? 0) || 0) > 0.7;
+    }
+    const pool = hard ? HARD : SOFT;
+    const sec = directive?.sectionChangeId ?? directive?.sectionType ?? null;
+    const secChanged = sec != null && sec !== st.sec;
+    const moodFlip = st.hard !== hard;
+    const held = t - st.since;
+    if (!st.id || moodFlip || (secChanged && held > 8) || held > 28) {
+      let next;
+      if (pool.includes(preset) && preset !== st.id && (hard || preset !== 'rainy_city' || st.n > 2)) next = preset;
+      else { st.n++; const cur = pool.indexOf(st.id); next = pool[cur < 0 ? (st.n % pool.length) : (cur + 1 + (st.n % 2)) % pool.length]; if (next === st.id) next = pool[(cur + 1) % pool.length]; }
+      st.id = next; st.since = t; st.hard = hard;
+    }
+    if (sec != null) st.sec = sec;
+    return st.id;
+  }
+
   _drawDebugHud(ctx, w, h, directive, audio) {
     drawDebugHudImpl(ctx, w, h, directive, audio);
   }
@@ -1403,11 +1452,11 @@ export class Renderer {
     const rawScale = Number(spec.scale);
     const dirScale = Math.max(1.55, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1.55);
     const isLead = idx === 0;
-    const targetFrac = isLead ? 0.62 : Math.max(0.42, 0.52 - idx * 0.04);
+    const targetFrac = isLead ? 0.30 : Math.max(0.22, 0.27 - idx * 0.02); // art1: human scale in a scene
     const BODY_REF = 48;
     // HOLD-1345: NO max-16 clamp — lead body ≥ 0.55h on any canvas height
     let scale = (h * targetFrac / BODY_REF) * (dirScale / 1.55);
-    if (!Number.isFinite(scale) || scale < 4) scale = Math.max(4, h * 0.55 / BODY_REF);
+    if (!Number.isFinite(scale) || scale < 2) scale = Math.max(2, h * 0.28 / BODY_REF);
     let opacity = spec.opacity != null ? Number(spec.opacity) : 0.95;
     if (!Number.isFinite(opacity)) opacity = 0.95;
     const holdSilent = !!spec.holdSilent;
@@ -1467,6 +1516,12 @@ export class Renderer {
       };
       look.style = 'silhouette';
       if (look.fauna) look.fauna = false;
+    }
+    // art1: over a painted plate, cast reads as dark rim-lit silhouettes
+    if (this._artOn && look.palette) {
+      const rim = this.art.rim(this.art.active()) || look.palette.rim;
+      look.palette = { ...look.palette, fill: 'rgba(8,7,10,0.96)', rim, shadow: 'rgba(0,0,0,0.6)' };
+      look.style = 'silhouette';
     }
     const spread = look.formation ? 0.36 : 0.28;
     const i = idx % Math.max(1, count);
@@ -1534,6 +1589,15 @@ export class Renderer {
         // Lead FG present → coat/mic wedge must read (not pastoral blob)
         roleIdDraw = 'vocalish';
       }
+    }
+    if (this._artOn) {
+      const drawnArt = drawHumanSilhouette(ctx, {
+        x: fx, baseY: h * (0.8 + (idx % 3) * 0.025), heightPx: h * (idx === 0 ? 0.2 : 0.16), t, i: idx, opacity: holdSilent ? 0.4 : 0.96,
+        energy: Number(state?.audio?.energy || 0), hard: this._artPick ? !!this._artPick.hard : !!hardLook,
+        rim: look.palette?.rim, fill: look.palette?.fill, rimSide: (fx < w / 2) ? 1 : -1
+      });
+      if (idx === 0) this._figureAnchor = { x: drawnArt.fx, y: (drawnArt.headY + drawnArt.chestY) * 0.5 };
+      return;
     }
     const drawn = drawCastFigure(ctx, {
       x: fx,

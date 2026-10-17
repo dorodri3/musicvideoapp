@@ -28,8 +28,8 @@ const semantic = {
 // Fire-and-forget preload
 _loadSemantic();
 
-import { dominantVibe, applyVibeToCast, inferSpeechLikeFromRoles, readVibe, readMoment } from './vibeCast.js?v=novideo2';
-import { resolveLibraryCast, assignRoleIds, applyWeaponBinding } from './castLibrary.js?v=novideo2';
+import { dominantVibe, applyVibeToCast, inferSpeechLikeFromRoles, readVibe, readMoment } from './vibeCast.js?v=art1';
+import { resolveLibraryCast, assignRoleIds, applyWeaponBinding } from './castLibrary.js?v=art1';
 
 /** Concept id → base cast seed (kind/action/placement). Overridden by figureFromConcept when present. */
 const CONCEPT_CAST = {

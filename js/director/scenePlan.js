@@ -15,19 +15,19 @@
  * lyricStickExpire / sectionChangeId: when section TYPE or chorus.repeat changes,
  * Visual Engine / Lyrics Brain clear sticky last-good phrase (Quality gap 5).
  */
-import { NarrativeState } from './narrativeState.js?v=novideo2';
+import { NarrativeState } from './narrativeState.js?v=art1';
 import { VariationController } from './variation.js';
 import { ScaleDirector } from './scale.js';
-import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=novideo2';
-import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=novideo2';
-import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=novideo2';
+import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=art1';
+import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=art1';
+import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=art1';
 import {
   dominantVibe, vibePackFamily, vibeLeadPresets, vibeForbiddenPresets, genreLeadPresets,
   genreForbiddenPresets, ladderLeadPresets, resolveLadder, isAggressiveVibe, ladderStepChanged,
   inferSpeechLikeFromRoles, readVibe, readMoment, STICKY_MS, PIN_HOLD_MS, ESCAPE_MS, AGGRESSION_THRESH,
   hardLockPresets, isHardLockPreset, softForbiddenUnderHard, isSoftForbiddenUnderHard
-} from './vibeCast.js?v=novideo2';
-import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=novideo2';
+} from './vibeCast.js?v=art1';
+import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=art1';
 
 const SECTION_INTENTS = {
   intro: {

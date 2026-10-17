@@ -1,3 +1,3 @@
-https://lion-frequency-laser-prove.trycloudflare.com
+https://layers-nevertheless-logs-tradition.trycloudflare.com
 Local: http://127.0.0.1:8765/
-Live SoT: 2026-10-04 ~3:32 AM PT (lion-frequency-laser-prove; tunnel health restart, quic)
+Live SoT: 2026-10-17 2:08 PM PT (Tunnel Ops restart, PID 1856599)

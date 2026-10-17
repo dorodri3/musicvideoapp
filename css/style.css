@@ -442,3 +442,11 @@ body.immersive #show-screen {
   line-height: 1.35;
   pointer-events: none;
 }
+
+/* art1: style chips collapse behind one small toggle */
+.overlay-chrome .overlay-styles { display: none !important; }
+.overlay-chrome.styles-open .overlay-styles { display: flex !important; }
+.styles-toggle { font-size: 12px; padding: 4px 10px; opacity: .6; border-radius: 14px; background: rgba(0,0,0,.35); color: #ddd; border: 1px solid rgba(255,255,255,.18); align-self: flex-end; }
+.styles-toggle:hover, .styles-toggle:focus { opacity: 1; }
+.overlay-btns button { font-size: 12px; padding: 4px 10px; opacity: .7; }
+.styles-toggle { pointer-events: auto; min-height: 32px; }

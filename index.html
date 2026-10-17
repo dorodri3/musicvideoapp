@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Light Show — Imagined Movie</title>
-  <link rel="stylesheet" href="css/style.css?v=overlaychips1" />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="css/style.css?v=art1" />
 </head>
 <body>
   <div id="setup-screen">
@@ -118,6 +119,7 @@
     <div id="show-overlay">
       <div id="hud-info"></div>
       <div class="overlay-chrome">
+        <button type="button" id="btn-styles-toggle" class="styles-toggle" aria-expanded="false" aria-label="Show style options" onclick="var c=this.parentNode;var o=c.classList.toggle('styles-open');this.setAttribute('aria-expanded',o);">&#9776; Style</button>
         <div class="overlay-styles" role="group" aria-label="Mood and style">
           <button type="button" data-style="realistic">Realistic</button>
           <button type="button" data-style="cinematic" class="active">Cinematic</button>
@@ -137,6 +139,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/main.js?v=overlaychips1"></script>
+  <script type="module" src="js/main.js?v=art1"></script>
 </body>
 </html>

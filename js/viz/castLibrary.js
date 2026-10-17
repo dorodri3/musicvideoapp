@@ -1328,7 +1328,7 @@ export function drawCastFigure(ctx, opts) {
   }
 
   // Readable dance feet on ground plane (step/sway/spin) — contact, not float
-  if (dance.active && (dance.motion === 'step' || dance.motion === 'sway' || dance.motion === 'spin')) {
+  if (false && dance.active && (dance.motion === 'step' || dance.motion === 'sway' || dance.motion === 'spin')) { // art1: feet ovals removed
     const prevA = ctx.globalAlpha;
     const feetGain = dance.intentBoost ? 1.35 : 1.0;
     ctx.globalAlpha = opacity * Math.min(0.95, (0.45 + dance.amp * 0.45) * feetGain);
@@ -1422,10 +1422,7 @@ export function drawRoleAgentFx(ctx, drawn, opts = {}) {
     eg.addColorStop(0, `rgba(255,200,100,${0.5 + pulse * 0.4})`);
     eg.addColorStop(0.5, `rgba(255,160,60,${0.25 + pulse * 0.25})`);
     eg.addColorStop(1, 'rgba(255,120,40,0)');
-    ctx.fillStyle = eg;
-    ctx.beginPath();
-    ctx.ellipse(fx, baseY, 22 * scale + pulse * 16, 6 * scale + pulse * 4, 0, 0, Math.PI * 2);
-    ctx.fill();
+    /* art1: stage-glow oval removed */
     // Dust ticks
     ctx.strokeStyle = `rgba(255,220,160,${0.35 + pulse * 0.4})`;
     ctx.lineWidth = 1.2;

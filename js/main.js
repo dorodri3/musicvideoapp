@@ -5,16 +5,16 @@
  * Flow: identify song → fetch lyrics → plan from lyrics → live lyric concepts direct scenery;
  * instruments animate how the world moves.
  */
-import { AudioAnalyzer } from './audio/analyzer.js?v=novideo2';
+import { AudioAnalyzer } from './audio/analyzer.js?v=art1';
 import { VocalEstimate } from './audio/vocalEstimate.js';
 import { LyricsParser } from './lyrics/parser.js';
 import { SemanticExtractor } from './lyrics/semantic.js';
 import { LyricsAlignment } from './lyrics/alignment.js';
 import { StructureAnalyzer } from './structure/analyzer.js';
 import { EmotionEngine } from './emotion/engine.js';
-import { ScenePlanner } from './director/scenePlan.js?v=overlaychips1';
-import { Renderer } from './viz/renderer.js?v=novideo2';
-import { Controls } from './ui/controls.js?v=overlaychips1';
+import { ScenePlanner } from './director/scenePlan.js?v=art1';
+import { Renderer } from './viz/renderer.js?v=art1';
+import { Controls } from './ui/controls.js?v=art1';
 import { SongIdentity } from './song/identity.js';
 
 class LightShowApp {
