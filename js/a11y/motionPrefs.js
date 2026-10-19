@@ -4,7 +4,7 @@
  * Do NOT import from typography / casting / scenic lyric paths.
  *
  * Wire examples (Visual owns call sites):
- *   import { getMotionComfort } from '../a11y/motionPrefs.js';
+ *   import { getMotionComfort } from '../a11y/motionPrefs.js?v=art8';
  *   const c = getMotionComfort();
  *   // lighting: if (c.muteWhiteOut) skip white_flash / white_out peaks
  *   // renderer: whiteMinGapMs = Math.max(g.whiteMinGapMs, c.minFullWhiteGapMs)

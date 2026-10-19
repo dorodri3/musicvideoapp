@@ -1,0 +1,144 @@
+/**
+ * Lyrics Brain idgate harness (Node 20+, ESM). Run: node scripts/harness-idgate.mjs
+ *  a) Night Owl (Broke For Free, 194s) vs LIVE LRCLIB → lyric-free
+ *  b) Baker Street (Gerry Rafferty, 248s) vs LIVE LRCLIB → synced passes
+ *  c) LRCLIB 503 / network error (mock) → offline .lrc (lyrics/Josh_Woodward_-_Go.lrc) via local server
+ *  d) Rule 5: alignment.noteVocal zero vocal 60s+ → drop; normal vocal → keep
+ */
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '..');
+// art8: import parser.js with the SAME ?v tag alignment.js uses, so both share one module instance
+const { readFileSync } = await import('fs');
+const PV = (readFileSync(path.join(root, 'js/lyrics/alignment.js'), 'utf8').match(/['"]\.\/parser\.js(\?v=[\w.-]+)?['"]/) || [])[1] || '';
+const P = await import(pathToFileURL(path.join(root, 'js/lyrics/parser.js')).href + PV);
+const A = await import(pathToFileURL(path.join(root, 'js/lyrics/alignment.js')).href);
+const { LyricsParser, gateDecision, checkSyncPlausibility, SCENIC_STATUS } = P;
+const { LyricsAlignment } = A;
+
+const OFFLINE_BASE = process.env.OFFLINE_BASE || 'http://127.0.0.1:8765/';
+const results = [];
+const check = (name, ok, info) => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`); if (info) console.log('   ', typeof info === 'string' ? info : JSON.stringify(info)); };
+const realFetch = globalThis.fetch;
+// LRCLIB 503s intermittently (see QA-20261001-0314): retry live searches on 'error' verdict only
+async function liveSearch(lp, ...args) {
+  for (let i = 0; i < 4; i++) {
+    const r = await lp.search(...args);
+    if (lp.lastGate?.verdict !== 'error') return r;
+    console.log(`    (LRCLIB ${lp.lastGate.failure} — retry ${i + 1})`);
+    await new Promise(res => setTimeout(res, 3000 * (i + 1)));
+  }
+  return null;
+}
+
+// a) Night Owl live
+{
+  const lp = new LyricsParser();
+  const r = await liveSearch(lp, 'Night Owl', 'Broke For Free', 194);
+  const g = lp.lastGate || {};
+  check('a) Night Owl → lyric-free', r === null && g.lyricFree === true && g.status === SCENIC_STATUS, {
+    verdict: g.verdict, rules: g.rules, candidateId: g.candidateId,
+    sync: g.sync && { lines: g.sync.lines, first: g.sync.first, last: g.sync.last, reason: g.sync.reason },
+    borrowed: g.borrowed && { otherCount: g.borrowed.otherCount, ownCount: g.borrowed.ownCount, top: g.borrowed.matches?.slice(0, 3) },
+    status: g.status
+  });
+  // rejected text cannot sneak back in through alignment (profile restore / paste)
+  const al = new LyricsAlignment();
+  al.setPhrases(lp.parse('[00:39.06] Night comes down and finds you alone\n[00:43.19] In a space and time of your own\n[00:46.88] Lost in dreams in a world full of shadows\n[00:47.10] Down the street the neon light shines\n[00:47.50] x\n[00:48.0] y'), 194);
+  check('a2) rejected Night Owl text restored later → alignment drops it (no art5 re-spread)', al.getPhrases().length === 0 && al.gateDropped === 'rejected-text', { gateDropped: al.gateDropped, timingSource: al.getTimingSource() });
+}
+
+// b) Baker Street live
+{
+  const lp = new LyricsParser();
+  const r = await liveSearch(lp, 'Baker Street', 'Gerry Rafferty', 248);
+  const g = lp.lastGate || {};
+  check('b) Baker Street → synced lyrics pass', !!r && r.synced === true && g.verdict === 'synced' && !r.lowConfidence, r && {
+    id: r.meta.id, artist: r.meta.artistName, duration: r.meta.duration, lineCount: r.lineCount, synced: r.synced,
+    verdict: g.verdict, rules: g.rules, sync: { lines: g.sync?.lines, span: g.sync?.span?.toFixed(1), spanFrac: g.sync?.spanFrac?.toFixed(2), density: g.sync?.density?.toFixed(2) },
+    borrowed: { checked: g.borrowed?.checked, otherCount: g.borrowed?.otherCount, ownCount: g.borrowed?.ownCount }
+  });
+  if (r) {
+    const al = new LyricsAlignment();
+    al.setPhrases(lp.parse(r.raw), 248);
+    check('b2) Baker Street through alignment keeps LRC timing', al.getTimingSource() === 'lrc' && al.getPhrases().length > 0, { phrases: al.getPhrases().length, timingSource: al.getTimingSource(), repaired: al.timingRepaired });
+  }
+}
+
+// c) Simulated LRCLIB outage → offline .lrc
+for (const mode of ['503', 'network', 'timeout']) {
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('lrclib.net')) {
+      if (mode === '503') return new Response('Service Unavailable', { status: 503 });
+      if (mode === 'timeout') { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+      throw new TypeError('fetch failed');
+    }
+    return realFetch(url, init);
+  };
+  const lp = new LyricsParser();
+  lp.offlineBase = OFFLINE_BASE;
+  const r = await lp.search('Go', 'Josh Woodward', 0, { fileName: 'Josh_Woodward_-_Go.mp3' });
+  let painted = null;
+  if (r) {
+    const al = new LyricsAlignment();
+    al.setPhrases(lp.parse(r.raw), 200);
+    const st = al.update(10, null, { type: 'verse', label: 'verse' });
+    painted = { phrases: al.getPhrases().length, timingSource: al.getTimingSource(), lineAt10s: st.phrase?.text };
+  }
+  check(`c) LRCLIB ${mode} → offline .lrc fallback`, !!r && r.source === 'offline' && r.synced && painted?.phrases > 0, r && {
+    source: r.source, url: r.offlineUrl, lineCount: r.lineCount, synced: r.synced, gate: lp.lastGate?.status, alignment: painted
+  });
+  globalThis.fetch = realFetch;
+}
+// c2) outage + no offline file → clean error verdict (main shows status, scenic plate paints w/o lyrics)
+{
+  globalThis.fetch = async (url, init) => String(url).includes('lrclib.net') ? new Response('x', { status: 503 }) : realFetch(url, init);
+  const lp = new LyricsParser();
+  lp.offlineBase = OFFLINE_BASE;
+  const r = await lp.search('Nonexistent Song Zzz', 'Nobody Qq', 0);
+  check('c2) outage, no offline file → null + error status', r === null && lp.lastGate?.verdict === 'error', lp.lastGate);
+  globalThis.fetch = realFetch;
+}
+
+// d) Rule 5 live vocal check
+const lrc = Array.from({ length: 20 }, (_, i) => `[00:${String(10 + i * 4).padStart(2, '0')}.00] line number ${i} of the song`).join('\n')
+  .replace(/\[00:(\d\d)\./g, (m, s) => { const n = +s; return `[0${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}.`; });
+const run = (vocalAt) => {
+  const lp = new LyricsParser();
+  const al = new LyricsAlignment();
+  al.setPhrases(lp.parse(lrc), 200);
+  let fired = 0; let firedAt = null;
+  for (let t = 0; t <= 90; t += 1 / 30) {
+    if (al.noteVocal(t, vocalAt(t), { vibe: { speechLike: 0.1 } })) { fired++; firedAt = t; }
+    al.update(t, null, null);
+  }
+  return { fired, firedAt: firedAt && +firedAt.toFixed(2), phrasesLeft: al.getPhrases().length, verdict: al.vocalVerdict(), at95: al.update(95).phrase?.text ?? null };
+};
+{
+  const zero = run(() => ({ likelyVocal: false, intensity: 0.02, activity: 0.02 }));
+  check('d1) zero vocal 60s after first line → drop lyrics', zero.verdict.verdict === 'drop' && zero.fired === 1 && zero.phrasesLeft === 0, zero);
+  const sing = run((t) => ({ likelyVocal: (t % 4) < 3, intensity: 0.6, activity: 0.5 }));
+  check('d2) normal vocal → keep lyrics', sing.verdict.verdict === 'keep' && sing.fired === 0 && sing.phrasesLeft > 0, sing);
+  const num = run(() => 0);
+  check('d3) numeric 0 presence also drops', num.verdict.verdict === 'drop', { verdict: num.verdict.verdict });
+}
+
+// pure decision table
+{
+  const t = [
+    [{ instrumental: true }, 'lyric-free'], [{ artistReject: true }, 'lyric-free'], [{ durationReject: true }, 'lyric-free'],
+    [{ syncFlag: true, borrowedFlag: true }, 'lyric-free'], [{ vocalDrop: true }, 'lyric-free'],
+    [{ syncFlag: true }, 'plain'], [{ borrowedFlag: true }, 'plain'], [{ durationSoft: true }, 'plain'], [{}, 'synced']
+  ];
+  const bad = t.filter(([f, v]) => gateDecision(f).verdict !== v);
+  check('e) gateDecision table', bad.length === 0, bad.length ? bad : `${t.length} cases`);
+  const crammed = Array.from({ length: 25 }, (_, i) => `[00:${(39 + i * 0.5).toFixed(2).padStart(5, '0')}] word ${i}`).join('\n');
+  const s3 = checkSyncPlausibility(crammed, 194);
+  check('e2) rule 3 flags 25 lines in 12s of 194s', s3.flag, s3.reason);
+}
+
+const failed = results.filter(r => !r.ok).length;
+console.log(`\n${results.length - failed}/${results.length} passed`);
+process.exit(failed ? 1 : 0);

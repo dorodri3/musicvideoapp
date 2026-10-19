@@ -10,7 +10,7 @@
 let _semanticMod = null;
 async function _loadSemantic() {
   if (_semanticMod) return _semanticMod;
-  try { _semanticMod = await import('../lyrics/semantic.js'); }
+  try { _semanticMod = await import('../lyrics/semantic.js?v=art8'); }
   catch (_) { _semanticMod = {}; }
   return _semanticMod;
 }
@@ -28,8 +28,8 @@ const semantic = {
 // Fire-and-forget preload
 _loadSemantic();
 
-import { dominantVibe, applyVibeToCast, inferSpeechLikeFromRoles, readVibe, readMoment } from './vibeCast.js?v=art4';
-import { resolveLibraryCast, assignRoleIds, applyWeaponBinding } from './castLibrary.js?v=art4';
+import { dominantVibe, applyVibeToCast, inferSpeechLikeFromRoles, readVibe, readMoment } from './vibeCast.js?v=art8';
+import { resolveLibraryCast, assignRoleIds, applyWeaponBinding } from './castLibrary.js?v=art8';
 
 /** Concept id → base cast seed (kind/action/placement). Overridden by figureFromConcept when present. */
 const CONCEPT_CAST = {

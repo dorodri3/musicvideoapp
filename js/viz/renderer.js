@@ -3,14 +3,14 @@
  * Roles animate HOW the world moves; lyrics direct WHAT world.
  * Prefer audio.roles || audio.instruments (see js/audio/ROLES.md).
  */
-import { ContinuityEngine } from '../scene/continuity.js?v=art4';
-import { CameraSystem } from '../camera/system.js';
-import { LightingSystem } from '../lighting/system.js?v=art4';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=art4';
-import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=art4';
-import { getMotionComfort } from '../a11y/motionPrefs.js';
-import { ArtPlates, ART_WORLDS, drawHumanSilhouette } from './artPlates.js?v=art4';
-import { drawPerformer, roleLook } from './performers.js?v=art4';
+import { ContinuityEngine } from '../scene/continuity.js?v=art8';
+import { CameraSystem } from '../camera/system.js?v=art8';
+import { LightingSystem } from '../lighting/system.js?v=art8';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=art8';
+import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=art8';
+import { getMotionComfort } from '../a11y/motionPrefs.js?v=art8';
+import { ArtPlates, ART_WORLDS, drawHumanSilhouette } from './artPlates.js?v=art8';
+import { drawPerformer, roleLook } from './performers.js?v=art8';
 
 
 /** HOLD-0330: module-level HUD — never depends on prototype lookup (TypeError-proof). */
@@ -124,6 +124,13 @@ export class Renderer {
 
   setCharacters(on) {
     this.showCharacters = !!on;
+  }
+
+  /** art7 P0: drop every held caption between songs (typography sticky/hold + last phrase). */
+  resetLyricCaches() {
+    try { this.typography?.clearSticky?.(); } catch (_) { /* soft */ }
+    if (this.typography) { this.typography.currentText = ''; this.typography.words = []; this.typography._lastSection = null; }
+    this._lastPhrase = null; this._lastPhraseKey = null;
   }
 
   setLyrics(on) {
@@ -1089,6 +1096,8 @@ export class Renderer {
     this._artOn = this.art.drawBg(ctx, w, h, _artPreset, state, !!getMotionComfort().reduceMotion, !!this._artHard, _baseXform);
     // art2: old procedural fg layers are off; fg = light rain/embers/fireflies over the painting
     if (this._artOn) this.art.drawFg(ctx, w, h, state, _baseXform, this.quality);
+    // art6: audio roles → scenic agents in the world (mist, ripples, lightning/neon/aurora, birds)
+    if (this._artOn) this.art.drawAgents(ctx, w, h, state, _baseXform, this.quality, this._dreamFeet || null);
     if (this._artOn) {
       // art3: ease the cast ground line + stage x between worlds (no jump on world change)
       const act = this.art.active();
@@ -1311,7 +1320,7 @@ export class Renderer {
       if (!plate) { const pool = hard ? HARD : SOFT; let hsh = 0; for (const c of id) hsh = (hsh * 31 + c.charCodeAt(0)) % 997; plate = pool[hsh % pool.length]; }
     }
     // proof hook for QA shoots: HUD preset vs plate on screen
-    try { globalThis.__LS_ART__ = { t, hud: directive?.preset || null, target: id, plate, shown: this.art.cur, mix: this.art.mix, mapped: plate !== id, hard, hardOnly: !!directive?.hardOnly, agg: +(+(audio?.vibe?.aggression ?? 0) || 0).toFixed(2), lad: String(audio?.moment?.ladder || audio?.vibe?.moment?.ladder || audio?.vibe?.ladder || '') }; } catch (_) {}
+    try { globalThis.__LS_ART__ = { t, hud: directive?.preset || null, target: id, plate, shown: this.art.cur, dominant: this.art.dominant || this.art.cur, dip: !!this.art.dip, mix: this.art.mix, mapped: plate !== id, hard, hardOnly: !!directive?.hardOnly, agg: +(+(audio?.vibe?.aggression ?? 0) || 0).toFixed(2), lad: String(audio?.moment?.ladder || audio?.vibe?.moment?.ladder || audio?.vibe?.ladder || '') }; } catch (_) {}
     return plate;
   }
 
@@ -1704,6 +1713,8 @@ export class Renderer {
       String(castRaw.kind || '').toLowerCase() === 'none');
     // Characters-on OR cast present → always attempt paint (kind=none still falls through to silhouette)
     if (!this.showCharacters && !castRaw && !directive?.concept?.figure && !directive?.figure) return;
+    // art5: over painted worlds the cast is the BAND — one performer per active audio role.
+    if (this._artOn) { this._drawArtDreamer(ctx, w, h, directive, state); return; } // art6: dreamer in the world (art5 band ensemble retired)
     let list = kindNone ? [] : this._normalizeCastList(directive);
     // HOLD-2149: empty members / kind=none / Characters on → one large FG silhouette
     if (!list.length && (this.showCharacters || castRaw || directive?.concept?.figure || directive?.figure)) {
@@ -1765,6 +1776,283 @@ export class Renderer {
       }
       if (drawn >= CAP) break;
     }
+  }
+
+  /**
+   * art5 (QA-0244 #4): the cast maps to the active audio roles. Each role level is smoothed
+   * (~1.5s) with on/off hysteresis, so a member joins after its part has played for a moment and
+   * leaves only after ~4s of silence; members fade in/out and glide between slots (no pops).
+   * vocalist ← vocal estimate / vocalish, guitarist ← harsh/lead without vocal, bassist ← bass,
+   * rhythm ← kick/snare/hats, dancer ← pads. 1 lead + up to 3 more (2–4 when the song has parts).
+   * Moves change on beat boundaries every 2–4 bars and on section change, picked by energy.
+   */
+  _drawArtEnsemble(ctx, w, h, directive, state) {
+    const t = Number(state?.t ?? 0) || 0;
+    const audio = state?.audio || {};
+    const R = audio.roles || audio.instruments || {};
+    const voc = audio.vocal || {};
+    const E = this._ens || (this._ens = { lv: {}, on: {}, offAt: {}, onAt: {}, mem: {}, lastT: t, beatPh: 0, bpm: 110, eSlow: 0, sec: null, beats: 0 });
+    const dt = Math.max(0, Math.min(0.1, t - E.lastT)); E.lastT = t;
+    const num = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+    const raw = {
+      vocalist: Math.max(num(voc.intensity) * (voc.likelyVocal ? 1 : 0.6), num(R.vocalish) * 0.85),
+      guitarist: Math.max(num(R.harsh) * 1.3, voc.likelyVocal ? 0 : num(R.lead) * 0.8),
+      bassist: num(R.bass),
+      rhythm: Math.max(num(R.kick), num(R.snare) * 0.9, num(R.hats) * 0.7),
+      dancer: num(R.pads) * 1.1
+    };
+    const kL = 1 - Math.exp(-dt / 1.5);
+    for (const r in raw) E.lv[r] = (E.lv[r] ?? raw[r]) + (raw[r] - (E.lv[r] ?? raw[r])) * kL;
+    for (const r in raw) {
+      const v = E.lv[r];
+      if (!E.on[r]) {
+        if (v > 0.3) { E.onAt[r] = E.onAt[r] || t; if (t - E.onAt[r] > 1.2) { E.on[r] = true; E.offAt[r] = 0; } }
+        else E.onAt[r] = 0;
+      } else if (v < 0.16) { E.offAt[r] = E.offAt[r] || t; if (t - E.offAt[r] > 4) { E.on[r] = false; E.onAt[r] = 0; } }
+      else E.offAt[r] = 0;
+    }
+    // lead: vocalist when singing / vocal-ish, else the strongest part
+    const order = ['vocalist', 'guitarist', 'bassist', 'rhythm', 'dancer'];
+    // lead has hysteresis too: the vocalist takes the lead once its part is ON and keeps it
+    // until it switches OFF; otherwise the current lead stays while its own part is on.
+    const strongest = order.filter(r => E.on[r]).sort((a, b) => E.lv[b] - E.lv[a])[0];
+    let lead = E.leadRole || null;
+    if (E.on.vocalist) lead = 'vocalist';
+    else if (!lead || !E.on[lead]) lead = strongest || lead || 'vocalist';
+    E.leadRole = lead;
+    // sticky membership: members already in the band get a +0.15 bonus, so two parts at similar
+    // levels don't keep swapping places
+    const prevBand = E.band || [];
+    const score = r => E.lv[r] + (prevBand.includes(r) ? 0.15 : 0);
+    let band = [lead, ...order.filter(r => r !== lead && E.on[r]).sort((a, b) => score(b) - score(a))].slice(0, 4);
+    // a full mix (energy up, ≥2 parts audible) never reads as a lone figure
+    const energy = num(audio.energy);
+    E.eSlow += (energy - E.eSlow) * (1 - Math.exp(-dt / 6));
+    if (band.length < 2 && E.eSlow > 0.28) {
+      const extra = order.filter(r => !band.includes(r)).sort((a, b) => E.lv[b] - E.lv[a])[0];
+      if (extra && E.lv[extra] > 0.12) band.push(extra);
+    }
+    E.band = band.slice();
+    // beat-locked dance phase: π per beat (one sway every 2 beats), nudged toward beat ticks
+    const bpm = Math.max(60, Math.min(180, Number(audio.bpm) || E.bpm)); E.bpm += (bpm - E.bpm) * Math.min(1, dt * 0.5);
+    let tempo = E.bpm; while (tempo > 135) tempo /= 2; // dance at a body-friendly tempo
+    // soft: one sway per bar (π/2 per beat); hard: one per 2 beats (π per beat); rate eases
+    E.rk = (E.rk ?? 0.5) + (((this._artHard ? 1 : 0.5)) - (E.rk ?? 0.5)) * Math.min(1, dt * 0.8);
+    const q = Math.PI * E.rk;
+    E.beatPh += dt * (tempo / 60) * q;
+    if (audio.beat) { const err = Math.round(E.beatPh / q) * q - E.beatPh; E.beatPh += err * 0.3; E.beats++; }
+    // section key → move refresh
+    const secKey = String(directive?.section?.label || directive?.section || state?.section?.label || state?.sectionType || state?.section || '');
+    const secChanged = E.sec != null && secKey !== E.sec; E.sec = secKey;
+    // slots: lead centre, others alternate around it; glide to slot
+    const stage = this._artStage ?? 0.5;
+    const ground = this._artG ?? this.art.ground(this.art.active());
+    const n = band.length;
+    const SL0 = n <= 1 ? [0] : n === 2 ? [-0.13, 0.15] : n === 3 ? [0, -0.26, 0.26] : [-0.1, 0.11, -0.3, 0.31];
+    // keep the whole group inside the frame (misty_lake's shore sits left of centre)
+    let shift = 0; const lo = stage + Math.min(...SL0), hi = stage + Math.max(...SL0);
+    if (lo < 0.13) shift = 0.13 - lo; else if (hi > 0.87) shift = 0.87 - hi;
+    const SL = SL0.map(v => v + shift);
+    const rim = this.art.rim(this.art.active());
+    const lightSide = this.art.light(this.art.active());
+    const hard = !!this._artHard;
+    const kA = 1 - Math.exp(-dt / 0.6), kX = 1 - Math.exp(-dt / 1.1);
+    // members fade toward target alpha; departing members keep their last slot
+    // slot assignment without crossings: the lead takes SL[0]; the others take the remaining
+    // slots in left→right order matching their current left→right order (no swaps through each other)
+    const slotOf = {};
+    if (band.length) {
+      slotOf[band[0]] = SL[0];
+      const rest = band.slice(1);
+      const restSlots = SL.slice(1).sort((x, y) => x - y);
+      const cx = r => { const m = E.mem[r]; return m && m.x != null && m.a > 0.05 ? m.x - stage : (SL[band.indexOf(r)] ?? 0); };
+      rest.slice().sort((x, y) => cx(x) - cx(y)).forEach((r, j) => { slotOf[r] = restSlots[j]; });
+    }
+    const kOut = 1 - Math.exp(-dt / 0.3);
+    for (const r of order) {
+      const m = E.mem[r] || (E.mem[r] = { a: 0, x: null, move: null, from: null, mix: 1, nextAt: 0, seed: order.indexOf(r) });
+      const idx = band.indexOf(r);
+      const targetA = idx >= 0 ? 1 : 0;
+      m.a += (targetA - m.a) * (targetA > m.a ? kA : kOut); // leave faster than arrive
+      if (idx >= 0) {
+        const tx = stage + slotOf[r];
+        m.x = (m.x == null || m.a < 0.08) ? tx : m.x + (tx - m.x) * kX; // newcomers appear in place
+        m.lead = idx === 0;
+      } else m.lead = false;
+      // moves by look + energy band; switch on a beat every 2–4 bars, or on a section change
+      const pools = {
+        vocalist: [['sway', 'reach'], ['sway', 'reach', 'fist', 'lean']],
+        guitarist: [['strum', 'rock'], ['strum', 'headbang', 'rock']],
+        bassist: [['groove', 'step'], ['groove', 'headbang', 'step']],
+        rhythm: [['step', 'clap'], ['pump', 'clap', 'point', 'step']],
+        dancer: [['flow', 'hips', 'wave'], ['flow', 'armsup', 'wave', 'hips']]
+      };
+      const hi = (E.eSlow > 0.42 || hard) ? 1 : 0;
+      const pool = pools[r][hi];
+      if (!m.move) { m.move = pool[m.seed % pool.length]; m.from = m.move; m.mix = 1; m.nextAt = t + 6 + m.seed * 1.3; }
+      if ((t >= m.nextAt && audio.beat) || (secChanged && m.a > 0.5) || !pool.includes(m.move)) {
+        const opts = pool.filter(x => x !== m.move);
+        const nm = opts[(Math.floor(t * 7.31) + m.seed * 3) % opts.length] || m.move;
+        m.from = m.move; m.move = nm; m.mix = 0;
+        m.nextAt = t + (60 / Math.max(60, tempo)) * 4 * (2 + ((m.seed + E.beats) % 3)); // 2–4 bars
+      }
+      m.mix = Math.min(1, m.mix + dt / 0.7);
+    }
+    // draw back-to-front: side members first, lead last
+    const draw = order.filter(r => E.mem[r].a > 0.02 && E.mem[r].x != null).sort((a, b) => (E.mem[a].lead ? 1 : 0) - (E.mem[b].lead ? 1 : 0));
+    let k = 0;
+    for (const r of draw) {
+      const m = E.mem[r];
+      const lead = !!m.lead && band[0] === r;
+      const ax = w * Math.max(0.12, Math.min(0.88, m.x)) + Math.sin(t * 0.3 + m.seed) * 4;
+      const drawn = drawPerformer(ctx, {
+        x: ax, baseY: h * (ground - (lead ? 0 : 0.014)), heightPx: h * (lead ? 0.205 : 0.176), t, i: m.seed,
+        opacity: 0.97 * Math.min(1, m.a * 1.15), energy, hard, look: r, rim, lightSide,
+        beatPh: E.beatPh + m.seed * 0.6, move: m.move, moveFrom: m.from, moveMix: m.mix, level: E.lv[r]
+      });
+      if (lead) this._figureAnchor = { x: drawn.fx, y: (drawn.headY + drawn.chestY) * 0.5 };
+      k++;
+    }
+    globalThis.__LS_CAST__ = { band, n: band.length, lead, moves: band.map(r => E.mem[r].move), lv: Object.fromEntries(order.map(r => [r, +E.lv[r].toFixed(2)])) };
+  }
+
+  /**
+   * art6 (QA-0313): a dreamer INSIDE the painting, not a band in front of it.
+   * - 0–1 small figure (scaled to the world: WORLD_GEO.fh of the plate height), seen from behind
+   *   or side-on, on the painting's ground line, off-centre and never over a focal point.
+   * - While the camera pans the dreamer walks side-on (a tracking shot); at rest they stand and
+   *   look into the world, and dance when the song earns it (chorus / sustained energy).
+   * - Vocals → the dreamer's motion + glow. Other roles live in ArtPlates.drawAgents.
+   * - At peaks, 2–3 small distant figures appear for ~7s at different depths, then fade.
+   * No props, no band roles, no facing lineup. Debug: globalThis.__LS_CAST__ (cover, row).
+   */
+  _drawArtDreamer(ctx, w, h, directive, state) {
+    const t = Number(state?.t ?? 0) || 0;
+    const audio = state?.audio || {};
+    const id = this.art.active();
+    const G = id ? this.art.geo(id) : null;
+    const D = this._dream || (this._dream = { id: null, x: null, tx: null, a: 0, lastT: t, wph: 0, bph: 0, bpm: 110, eSlow: 0, move: 'idle', from: 'idle', mix: 1, nextAt: 0, facing: 1, sec: null, peakAt: -99, extras: [], visit: 0 });
+    const dt = Math.max(0, Math.min(0.1, t - D.lastT)); D.lastT = t;
+    const figs = [];
+    const energy = Math.max(0, Math.min(1, Number(audio.energy) || 0));
+    D.eSlow += (energy - D.eSlow) * (1 - Math.exp(-dt / 6));
+    const hard = !!this._artHard;
+    const vocLv = this.art.ag?.lv?.vocals || 0;
+    const rim = id ? this.art.rim(id) : null, lightSide = id ? this.art.light(id) : 1;
+    // beat phase (dance) — soft: a sway per bar, hard: per 2 beats
+    const bpm = Math.max(60, Math.min(180, Number(audio.bpm) || D.bpm)); D.bpm += (bpm - D.bpm) * Math.min(1, dt * 0.5);
+    let tempo = D.bpm; while (tempo > 135) tempo /= 2;
+    const qd = Math.PI * (hard ? 1 : 0.5);
+    D.bph += dt * (tempo / 60) * qd;
+    if (audio.beat) D.bph += (Math.round(D.bph / qd) * qd - D.bph) * 0.3;
+    const lab = (x) => (x && typeof x === 'object') ? (x.label || x.type || '') : (x || '');
+    const secKey = String(lab(directive?.section) || directive?.sectionLabel || directive?.sectionType || lab(state?.section) || state?.sectionType || '');
+    const secChanged = D.sec != null && secKey !== D.sec; D.sec = secKey;
+    const chorus = /chorus|drop/.test(secKey);
+    D.secKey = secKey;
+    if (!G || !this.art.toScreen(id, 0, 0)) { D.a = Math.max(0, D.a - dt * 2); this._dreamFeet = null; globalThis.__LS_CAST__ = { n: 0, cover: 0, row: 0, figs: [] }; return; }
+    if (D.id !== id) { D.id = id; D.visit++; D.tx = null; D.x = null; D.a = 0; D.extras = []; D.mode = 'track'; }
+    const dh = this.art.plateH(id);
+    const H = Math.max(h * 0.06, G.fh * dh);
+    const halfW = H * 0.22;
+    // candidate screen spots: off-centre, on walkable ground, clear of every focal point
+    const valid = (sx) => {
+      if (sx < w * 0.1 || sx > w * 0.9) return false;
+      const u = this.art.plateU(id, sx); if (u == null || u < G.walk[0] || u > G.walk[1]) return false;
+      const gv = this.art.groundV(id, u), top = gv - (H * 1.15) / dh;
+      for (const f of G.focal) {
+        const fx = this.art.toScreen(id, f[0], f[1])[0], fr = f[2] * this.art.map[id].dw;
+        const vOverlap = (f[1] + f[2] * 0.6) > top && (f[1] - f[2] * 0.6) < gv;
+        if (vOverlap && Math.abs(sx - fx) < fr + halfW) return false;
+      }
+      return true;
+    };
+    const cands = (D.visit % 2 ? [0.3, 0.7, 0.22, 0.78, 0.38, 0.62, 0.14, 0.86] : [0.7, 0.3, 0.78, 0.22, 0.62, 0.38, 0.86, 0.14]).map(f => f * w);
+    // two modes: 'anchor' = standing/dancing at a fixed spot IN the painting (moves with the pan);
+    // 'track' = walking through the world while the camera tracks them (screen-fixed, side-on).
+    const vx = this.art.panVx(id);
+    const earnedNow = !hard && (chorus || D.eSlow > 0.42) && energy > 0.25;
+    // hard: alternate ~12s walking through the destruction with ~12s standing defiant in it
+    const wantAnchor = earnedNow || Math.abs(vx) < w * 0.012 || (hard && (Math.floor((t + D.visit * 5) / 12) % 2 === 0 || D.eSlow > 0.62));
+    if (D.mode === 'anchor') {
+      const ax = this.art.toScreen(id, D.au, 0)[0];
+      if (!valid(ax) || !wantAnchor) { D.mode = 'track'; D.x = ax; D.tx = valid(ax) ? ax : (cands.find(valid) ?? null); }
+      else { D.x = ax; D.tx = ax; }
+    }
+    if (D.mode !== 'anchor') {
+      if (D.tx == null || !valid(D.tx)) D.tx = cands.find(valid) ?? null;
+      if (D.tx != null) D.x = D.x == null ? D.tx : D.x + (D.tx - D.x) * (1 - Math.exp(-dt / 1.6));
+      if (wantAnchor && D.x != null && D.tx != null && Math.abs(D.tx - D.x) < w * 0.02 && valid(D.x)) { D.mode = 'anchor'; D.au = this.art.plateU(id, D.x); }
+    }
+    const visible = D.tx != null;
+    D.a += ((visible ? 1 : 0) - D.a) * (1 - Math.exp(-dt / (visible ? 0.9 : 0.4)));
+    const respot = D.mode !== 'anchor' && D.x != null && D.tx != null ? D.tx - D.x : 0;
+    const walking = visible && D.mode !== 'anchor' && (Math.abs(vx) > w * 0.012 || Math.abs(respot) > w * 0.03);
+    if (walking) D.facing = Math.abs(respot) > w * 0.03 ? Math.sign(respot) : -Math.sign(vx);
+    const u = 0.84 * H / 100 / 0.84; // px per pose unit
+    const walkSpeed = Math.min(60, Math.abs(vx) + Math.abs(respot) * 0.6);
+    D.wph += dt * Math.max(2.2, (walkSpeed / Math.max(1, 34 * H / 100)) * Math.PI * 2);
+    // moves: walk / stand-and-look / dance when the song earns it
+    const earned = earnedNow;
+    const pool = walking ? ['walk']
+      : hard ? (D.eSlow > 0.5 ? ['open', 'idle', 'armsup', 'fist'] : ['idle', 'open', 'gaze'])
+      : earned ? ['flow', 'wave', 'armsup', 'hips', 'open'] : ['idle', 'gaze', 'idle', 'open'];
+    if (!pool.includes(D.move) || (t >= D.nextAt && (audio.beat || walking)) || (secChanged && !walking)) {
+      const opts = pool.length > 1 ? pool.filter(x => x !== D.move) : pool;
+      const nm = opts[Math.floor(t * 7.31) % opts.length];
+      if (nm !== D.move) { D.from = D.move; D.move = nm; D.mix = 0; }
+      D.nextAt = t + (60 / Math.max(60, tempo)) * 4 * (2 + (Math.floor(t) % 3));
+    }
+    D.mix = Math.min(1, D.mix + dt / 0.8);
+    // draw the dreamer (feet on the painting's ground under them)
+    if (D.a > 0.02 && D.x != null) {
+      const uu = this.art.plateU(id, D.x);
+      const by = this.art.toScreen(id, 0, this.art.groundV(id, Math.max(G.walk[0], Math.min(G.walk[1], uu))))[1];
+      const isWalk = D.move === 'walk';
+      const dr = drawPerformer(ctx, {
+        x: D.x, baseY: by, heightPx: H, t, i: 20, opacity: 0.96 * D.a, energy: hard ? energy : energy * 0.7, hard,
+        look: 'wanderer', rim, lightSide, beatPh: isWalk ? D.wph : D.bph, move: D.move, moveFrom: D.from, moveMix: D.mix,
+        facing: D.facing, glow: vocLv
+      });
+      this._figureAnchor = { x: dr.fx, y: (dr.headY + dr.chestY) * 0.5 };
+      this._dreamFeet = [D.x, by];
+      figs.push({ x: D.x, by, H, a: D.a });
+    } else this._dreamFeet = null;
+    // peaks → 2–3 small distant figures for ~7s at staggered depths (never a lineup)
+    const peak = (chorus && secChanged) || (D.eSlow > 0.5 && energy > 0.78);
+    if (peak && t - D.peakAt > 25 && D.a > 0.5) {
+      D.peakAt = t;
+      const n = hard ? 3 : 2, depths = [0.035, 0.06, 0.018], scales = [0.62, 0.48, 0.74];
+      const spots = [];
+      for (const f of [0.18, 0.84, 0.5, 0.36, 0.64]) {
+        const sx = f * w;
+        if (Math.abs(sx - (D.x ?? -1e9)) < w * 0.16 || spots.some(p => Math.abs(p - sx) < w * 0.16) || !valid(sx)) continue;
+        spots.push(sx); if (spots.length >= n) break;
+      }
+      D.extras = spots.map((sx, j) => ({ u: this.art.plateU(id, sx), dv: depths[j], k: scales[j], t0: t, look: j % 2 ? 'dancer' : 'wanderer', seed: 30 + j }));
+    }
+    for (const X of D.extras) {
+      const age = t - X.t0, life = 7;
+      const al = age < 1.2 ? age / 1.2 : age > life - 1.5 ? Math.max(0, (life - age) / 1.5) : 1;
+      if (age > life) continue;
+      const gv = this.art.groundV(id, X.u) - X.dv;
+      const [sx, sy] = this.art.toScreen(id, X.u, gv);
+      if (sx < -20 || sx > w + 20) continue;
+      const HX = H * X.k;
+      drawPerformer(ctx, { x: sx, baseY: sy, heightPx: HX, t, i: X.seed, opacity: 0.85 * al, energy: energy * 0.6, hard, look: X.look, rim, lightSide,
+        beatPh: D.bph + X.seed, move: hard ? 'open' : (earned ? 'flow' : 'idle'), facing: 1, glow: 0 });
+      figs.push({ x: sx, by: sy, H: HX, a: al });
+    }
+    D.extras = D.extras.filter(X => t - X.t0 <= 7);
+    // metric: bbox coverage (upper bound) + any row of ≥3 similar-size figures on one line
+    const vis = figs.filter(f => f.a > 0.3);
+    const cover = vis.reduce((acc, f) => acc + (f.H * 0.5) * (f.H * 1.12), 0) / (w * h);
+    let row = 0;
+    for (const f of vis) {
+      const c = vis.filter(g => Math.abs(g.by - f.by) < h * 0.025 && g.H / f.H > 0.85 && g.H / f.H < 1.18).length;
+      row = Math.max(row, c);
+    }
+    globalThis.__LS_CAST__ = { n: vis.length, cover: +cover.toFixed(4), row, move: D.move, walking, extras: D.extras.length, sec: D.secKey, H: Math.round(H), band: '', moves: [D.move] };
   }
 
   /** Scenic marks from directive.motifProps [{id,variant,strength,stage}]. */

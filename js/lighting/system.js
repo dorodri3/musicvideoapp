@@ -1,4 +1,4 @@
-import { getMotionComfort } from '../a11y/motionPrefs.js';
+import { getMotionComfort } from '../a11y/motionPrefs.js?v=art8';
 /**
  * Lighting: washes, shafts, bloom, white-out, silhouette, pulse.
  * Soft-clipped LED bloom + A11y getMotionComfort (HOLD-2142 comfort).

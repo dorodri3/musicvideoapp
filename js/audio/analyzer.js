@@ -2,7 +2,7 @@ import {
   resolveExplicitGenre,
   leanGenreFromAudio,
   HARSH_PROTECTED
-} from './genreFamily.js';
+} from './genreFamily.js?v=art8';
 
 /**
  * Audio analyzer: RMS, peak, centroid, flux, bass/mid/treble,

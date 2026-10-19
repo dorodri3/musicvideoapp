@@ -118,3 +118,34 @@ node --check: scenePlan.js motifProps.js main.js OK
 - Pre-ckpt: v2-worlds-pre-hold-0321-20261001-192221
 
 2026-10-01 03:42 PT — v2-worlds-20261001-034206-hold-0338-softclear — Worlds HOLD-0338 softClear/softBed → hardOnly false (Night Owl ≠ metal_hall); Clash HARD_LOCK intact; ?v=cohere6
+
+=== idgate-20261019-0323 (Lyrics Brain idgate) ===
+Time: 2026-10-19 03:23 PT
+Lyrics Brain — song-ID sanity gate for LRCLIB + offline .lrc fallback (HOLD QA-20261001-0314). Approved by bot 1.
+NO ?v bump per bot 1; fold into art6 gate. index.html untouched.
+Files:
+- js/lyrics/parser.js — gate helpers (exported): checkIdentity, checkSyncPlausibility, checkBorrowedText,
+  gateDecision, textSimilarity, lyricTextLines/candidateLines/syncedLineTimes, mark/is/clearRejectedLyrics;
+  pickBestResult now hard-filters rule-2 rejects and lets instrumental records compete; search() runs the gate,
+  sets parser.lastGate {verdict, rules, status, ...}, caches per query; soft flag → plain text (no sync) +
+  lowConfidence:true; lyric-free → null (same no-lyrics path → scenic plate). loadOfflineLrc(): on LRCLIB
+  5xx / network error / timeout / no hits → GET lyrics/<stem>.lrc (upload filename stem, "Artist - Title",
+  "Artist_-_Title", slug) then the manually loaded .lrc in #lyrics-input.
+- js/lyrics/alignment.js — setPhrases drops gate-rejected text (no art5 re-spread of rejected records);
+  rule 5 noteVocal(t, vocal, audio)/vocalVerdict() + exported vocalPresence/VOCAL_CHECK.
+- js/main.js — 2 minimal hooks marked "// Lyrics Brain idgate:" (_fetchLyrics status for lyric-free/outage;
+  _frame noteVocal before alignment.update). No refactor.
+- lyrics/Josh_Woodward_-_Go.lrc — NEW data file, copied from /workspace/light-show-qa/internet/ (offline fallback).
+- scripts/harness-idgate.mjs — NEW Node harness.
+Rules: R1 instrumental → lyric-free · R2 artist sim<0.8 / dur>10s reject, 5–10s soft · R3 span<25% or
+>1 line/1.2s · R4 one title-only search (5s timeout, fail-open), other-artist match ≥0.85 on first 3 lines
+(flag only when other-artist matches ≥ own-artist matches) · R5 almost no vocal in 60s after first line.
+Lyric-free = R1 | R2 reject | (R3 & R4) | R5. One soft flag = plain, no sync, lowConfidence.
+Tests (node scripts/harness-idgate.mjs): 13/13 PASS
+- a) Night Owl/Broke For Free/194 LIVE → lyric-free, rules R3+R4 (id 18839918: 24 lines 39.06–51.25s, 6.3% span,
+  1.97 lines/s; 8 Gerry Rafferty records sim 1.0 vs 1 own)
+- b) Baker Street/Gerry Rafferty/248 LIVE → synced, id 36995963, 32 lines, synced=true, no rules; alignment lrc
+- c) mocked LRCLIB 503 / network / timeout → offline lyrics/Josh_Woodward_-_Go.lrc via :8765, 29 lines synced, alignment lrc
+- d) rule 5: zero vocal → drop at t≈70s (first line 10s); normal vocal → keep
+- headless Chrome (CDP) load of http://127.0.0.1:8765/: no console errors/exceptions (only apple meta deprecation warning)
+Backups: js/lyrics/parser.js.pre-idgate, js/lyrics/alignment.js.pre-idgate, js/main.js.pre-idgate

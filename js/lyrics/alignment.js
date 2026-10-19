@@ -6,7 +6,39 @@
  * Sticky holds last-good briefly between phrases / after last line,
  * but EXPIRES on section TYPE change and after max hold past phrase.end
  * so verse lines never glue into chorus.
+ *
+ * Lyrics Brain idgate: setPhrases drops gate-rejected text (never re-spread / shown);
+ * noteVocal()/vocalVerdict() = rule 5 live vocal check → lyric-free scenic mode mid-play.
  */
+import { isRejectedLyrics } from './parser.js?v=art8';
+
+/** Rule 5 tuning: window after first timed line, min observed coverage, "almost no vocal". */
+export const VOCAL_CHECK = {
+  windowSec: 60,
+  minCoverageSec: 40,
+  voicedLevel: 0.25,
+  maxVoicedFrac: 0.08,
+  maxMean: 0.12,
+  maxStepSec: 0.5
+};
+
+/**
+ * Vocal presence 0..1 from whatever the frame exposes. Accepts a number, a VocalEstimate
+ * result ({likelyVocal, intensity, activity}), and/or the analyzer frame (vibe.speechLike).
+ */
+export function vocalPresence(vocal, audio = null) {
+  if (typeof vocal === 'number') return Math.max(0, Math.min(1, vocal));
+  let p = 0;
+  if (vocal && typeof vocal === 'object') {
+    if (vocal.likelyVocal) p = Math.max(p, vocal.intensity || 0, vocal.activity || 0);
+    if (typeof vocal.vocalPresence === 'number') p = Math.max(p, vocal.vocalPresence);
+  }
+  const sp = audio?.vibe?.speechLike ?? audio?.vibe?.spoken ?? 0;
+  // speechLike also rises on beat-less ambient beds; only trust it when strong
+  if (sp > 0.6) p = Math.max(p, sp);
+  return Math.max(0, Math.min(1, p));
+}
+
 export class LyricsAlignment {
   constructor() {
     this.phrases = [];
@@ -35,7 +67,15 @@ export class LyricsAlignment {
   setPhrases(phrases, duration = 0) {
     this.phrases = (phrases || []).map(p => ({ ...p }));
     this.duration = duration;
+    // Lyrics Brain idgate: gate-rejected text (e.g. borrowed Night Owl sheet restored from a
+    // profile) → lyric-free; never art5 re-spread it.
+    this.gateDropped = null;
+    if (this.phrases.length && isRejectedLyrics(this.phrases)) {
+      this.phrases = [];
+      this.gateDropped = 'rejected-text';
+    }
     const hadLrc = this.phrases.some(p => p.start != null);
+    this.timingRepaired = hadLrc ? this._repairCollapsedLrc() : false;
     this._ensureTiming();
     this._ensureWords();
     this.timingSource = !this.phrases.length
@@ -46,6 +86,66 @@ export class LyricsAlignment {
     this.activeIndex = -1;
     this.activeWordIndex = -1;
     this.clearSticky();
+    this._resetVocalCheck();
+  }
+
+  // ── Lyrics Brain idgate: rule 5 live vocal check ──────────────────────────
+  _resetVocalCheck() {
+    const first = this.phrases.length ? this.phrases[0].start : null;
+    this._vox = { first, lastT: null, covered: 0, sum: 0, voiced: 0, frames: 0, verdict: first == null ? 'n/a' : 'pending' };
+  }
+
+  /**
+   * Feed one frame of vocal evidence. Watches the first 60s after the first timed line;
+   * if there is almost no vocal energy there, drops lyrics (lyric-free scenic mode).
+   * @param {number} t playback time (s)
+   * @param {number|object} vocal number 0..1 or VocalEstimate result
+   * @param {object} [audio] analyzer frame (vibe.speechLike)
+   * @returns {boolean} true exactly once, on the frame lyrics were dropped
+   */
+  noteVocal(t, vocal, audio = null) {
+    const v = this._vox;
+    if (!v || v.verdict !== 'pending' || !Number.isFinite(t)) return false;
+    if (t < v.first) { v.lastT = t; return false; }
+    const C = VOCAL_CHECK;
+    const end = v.first + C.windowSec;
+    if (t <= end) {
+      const p = vocalPresence(vocal, audio);
+      const dt = v.lastT == null ? 0 : t - v.lastT;
+      if (dt > 0 && dt <= C.maxStepSec) v.covered += dt; // ignore seeks / stalls
+      v.lastT = t;
+      v.frames++;
+      v.sum += p;
+      if (p >= C.voicedLevel) v.voiced++;
+      return false;
+    }
+    // window done → verdict (fail-open: too little coverage, e.g. user seeked past → keep)
+    const mean = v.frames ? v.sum / v.frames : 0;
+    const voicedFrac = v.frames ? v.voiced / v.frames : 0;
+    if (v.covered >= C.minCoverageSec && voicedFrac < C.maxVoicedFrac && mean < C.maxMean) {
+      v.verdict = 'drop';
+      this.phrases = [];
+      this.timingSource = 'none';
+      this.gateDropped = 'no-vocal';
+      this.activeIndex = -1;
+      this.activeWordIndex = -1;
+      this.clearSticky();
+      return true;
+    }
+    v.verdict = 'keep';
+    return false;
+  }
+
+  /** @returns {{verdict:'n/a'|'pending'|'keep'|'drop', mean:number, voicedFrac:number, covered:number, frames:number}} */
+  vocalVerdict() {
+    const v = this._vox || { verdict: 'n/a', frames: 0, sum: 0, voiced: 0, covered: 0 };
+    return {
+      verdict: v.verdict,
+      mean: v.frames ? v.sum / v.frames : 0,
+      voicedFrac: v.frames ? v.voiced / v.frames : 0,
+      covered: v.covered || 0,
+      frames: v.frames || 0
+    };
   }
 
   /** Whether phrase times came from LRC timestamps or even distribution. */
@@ -69,6 +169,50 @@ export class LyricsAlignment {
   /** Alias for clearSticky — director may call expireSticky(). */
   expireSticky() {
     this.clearSticky();
+  }
+
+  /**
+   * art5: some LRCLIB records carry broken sync — e.g. "Broke For Free – Night Owl" has all 25
+   * stamps inside 39–51s (22 lines in ~4s), which flashed the whole lyric sheet in a few seconds
+   * and left 60–194s as a single 'outro'. Detect a collapsed run and re-spread the lines from the
+   * collapse point to near the end of the song (word-weighted). Healthy LRC is untouched.
+   * @returns {boolean} true if timing was repaired
+   */
+  _repairCollapsedLrc() {
+    const P = this.phrases.filter(p => p.start != null).sort((x, y) => x.start - y.start);
+    const n = P.length;
+    if (n < 5) return false;
+    const words = p => Math.max(1, (p.text || '').split(/\s+/).filter(Boolean).length);
+    const tooShort = i => {
+      const next = i + 1 < n ? P[i + 1].start : null;
+      if (next == null) return false;
+      return next - P[i].start < Math.max(0.9, words(P[i]) * 0.17);
+    };
+    const flags = P.map((_, i) => tooShort(i));
+    const bad = flags.filter(Boolean).length;
+    const dur = this.duration > 0 ? this.duration : 0;
+    const span = P[n - 1].start - P[0].start;
+    const crammed = dur > 0 && span < dur * 0.2 && n >= 10;
+    if (bad < Math.max(3, Math.ceil(n * 0.25)) && !crammed) return false;
+    // first index that starts a collapsed run (≥2 of the next 3 lines too short)
+    let c = flags.findIndex((f, i) => f && (flags.slice(i, i + 3).filter(Boolean).length >= 2));
+    if (c < 0) c = 0;
+    const t0 = P[c].start;
+    const outroPad = dur > 0 ? Math.min(8, dur * 0.05) : 4;
+    const t1 = dur > 0 ? dur - outroPad : t0 + (n - c) * 4;
+    if (t1 - t0 < (n - c) * 1.5) return false;
+    const W = P.slice(c).map(p => words(p) + 3); // +3: a base hold so short lines still read
+    const total = W.reduce((x, y) => x + y, 0);
+    let t = t0;
+    for (let i = c; i < n; i++) {
+      const slot = (t1 - t0) * W[i - c] / total;
+      P[i].start = t;
+      P[i].end = t + slot * 0.9;
+      P[i].words = undefined;
+      t += slot;
+    }
+    if (c > 0) P[c - 1].end = Math.min(P[c - 1].end ?? t0, t0);
+    return true;
   }
 
   _ensureTiming() {

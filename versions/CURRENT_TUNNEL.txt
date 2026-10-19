@@ -1,1 +1,2 @@
-https://creator-wing-nightlife-readers.trycloudflare.com
+TUNNEL DOWN (2026-10-19 4:27 AM PT): no verified phone URL right now. Working on it; this file will show a URL only after it returns HTTP 200 via public DNS.
+Local: http://127.0.0.1:8765/ (HTTP 200)

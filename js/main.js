@@ -5,17 +5,18 @@
  * Flow: identify song → fetch lyrics → plan from lyrics → live lyric concepts direct scenery;
  * instruments animate how the world moves.
  */
-import { AudioAnalyzer } from './audio/analyzer.js?v=art4';
-import { VocalEstimate } from './audio/vocalEstimate.js';
-import { LyricsParser } from './lyrics/parser.js';
-import { SemanticExtractor } from './lyrics/semantic.js';
-import { LyricsAlignment } from './lyrics/alignment.js';
-import { StructureAnalyzer } from './structure/analyzer.js';
-import { EmotionEngine } from './emotion/engine.js';
-import { ScenePlanner } from './director/scenePlan.js?v=art4';
-import { Renderer } from './viz/renderer.js?v=art4';
-import { Controls } from './ui/controls.js?v=art4';
-import { SongIdentity } from './song/identity.js';
+import { AudioAnalyzer } from './audio/analyzer.js?v=art8';
+import { VocalEstimate } from './audio/vocalEstimate.js?v=art8';
+import { LyricsParser } from './lyrics/parser.js?v=art8';
+import { SemanticExtractor } from './lyrics/semantic.js?v=art8';
+import { LyricsAlignment } from './lyrics/alignment.js?v=art8';
+import { analyzeLyricMood } from './director/lyricMood.js?v=art8';
+import { StructureAnalyzer } from './structure/analyzer.js?v=art8';
+import { EmotionEngine } from './emotion/engine.js?v=art8';
+import { ScenePlanner } from './director/scenePlan.js?v=art8';
+import { Renderer } from './viz/renderer.js?v=art8';
+import { Controls } from './ui/controls.js?v=art8';
+import { SongIdentity } from './song/identity.js?v=art8';
 
 class LightShowApp {
   constructor() {
@@ -71,7 +72,9 @@ class LightShowApp {
           [...document.querySelectorAll('[data-style].active')].map(n => n.dataset.style)
         )];
         if (this.settings) this.settings.styles = styles;
-        this.director.setStyles(styles);
+        // art5: tell the director which chip was just switched ON (most recent tap wins)
+        const tapped = el.classList.contains('active') ? el.dataset.style : null;
+        this.director.setStyles(styles, { tapped });
       });
     });
     this.controls.on('exit', () => this._exitShow());
@@ -97,6 +100,7 @@ class LightShowApp {
   }
 
   async _onSource({ type, file, _stableBytes }) {
+    try { this.controls.resetStylesToSetup?.(); } catch (_) { /* soft */ } // art5: new track → setup chips
     // Resolve stable bytes BEFORE any await that yields to the change-handler clear.
     // (_stableBytes was kicked off synchronously in _wire.)
     let stable = null;
@@ -123,7 +127,7 @@ class LightShowApp {
 
     await this._ensureAudio();
     this._disconnectSource();
-    this._lyricsResolved = false;
+    this._resetLyricsForNewSong('new-file'); // art7 P0 (was: only _lyricsResolved = false)
 
     if (type === 'mic') {
       try {
@@ -266,7 +270,7 @@ class LightShowApp {
         const prev = localStorage.getItem(key);
         if (prev) {
           const p = JSON.parse(prev);
-          if (p.lyrics && !this.controls.getLyricsText()) {
+          if (p.lyrics && !this.controls.getLyricsText() && !this._songLyricFree) { // art7: never for instrumental
             this.controls.setLyricsText(p.lyrics);
             this._lyricsResolved = true;
           }
@@ -292,6 +296,10 @@ class LightShowApp {
     }
 
     this.identity.setManual(a, t);
+    // art7 P0: a NEW song ID never inherits the previous song's lyric sheet
+    const songKey = (a + '|' + t).toLowerCase();
+    if (this._lyricSongKey && this._lyricSongKey !== songKey) this._resetLyricsForNewSong('new-song-id');
+    this._lyricSongKey = songKey;
     this._fetching = true;
     this.controls.setSongStatus('Fetching lyrics…');
     this.controls.setStatus('Fetching lyrics…');
@@ -301,6 +309,8 @@ class LightShowApp {
       if (result && result.raw) {
         this.controls.setLyricsText(result.raw);
         this._lyricsResolved = true;
+        this._songLyricFree = false;
+        this._lyricsMeta = { synced: !!result.synced, songKey, lineCount: result.lineCount }; // art7: lyrics-first direction
         // Prefer LRCLIB meta names when better
         if (result.meta?.artistName) this.identity.artist = result.meta.artistName;
         if (result.meta?.trackName) this.identity.title = result.meta.trackName;
@@ -314,6 +324,11 @@ class LightShowApp {
         return result;
       }
       this._lyricsResolved = false;
+      // Lyrics Brain idgate: gate verdict lyric-free / LRCLIB down → say so (same no-lyrics path)
+      const gate = this.lyricsParser.lastGate;
+      // art7 P0: instrumental / lyric-free → empty sheet + captions forced off for this song
+      if (gate?.lyricFree) { this._songLyricFree = true; this._lyricsMeta = null; try { this.controls.setLyricsText(''); } catch (_) { /* soft */ } }
+      if (gate?.lyricFree || gate?.verdict === 'error') { this.controls.setSongStatus(gate.lyricFree ? 'Instrumental / no lyrics' : 'No lyrics'); this.controls.setStatus(gate.status, 'warn'); return null; }
       this.controls.setSongStatus('No lyrics');
       this.controls.setStatus('No lyrics found — paste lyrics or check artist/title', 'warn');
       return null;
@@ -364,9 +379,11 @@ class LightShowApp {
       }
 
       let lyricsText = (settings.lyrics || '').trim();
+      // art7 P0: song ID said instrumental / lyric-free → no sheet, captions off, no refetch
+      if (this._songLyricFree) { lyricsText = ''; settings.lyrics = ''; settings.lyricsOn = false; }
 
       // Always prefer fetched/pasted lyrics; if empty try one more LRCLIB fetch
-      if (!lyricsText) {
+      if (!lyricsText && !this._songLyricFree) {
         this.controls.setBusy(true, 'Fetching…');
         this.controls.setStatus('Fetching lyrics…');
         const id = this.identity.get();
@@ -414,7 +431,12 @@ class LightShowApp {
       try { this.director._hardLatchUntil = 0; this.director._hotSince = 0; this.director._packHoldUntil = 0; this.director._lastTrackKey = null; } catch (_) { /* soft */ }
 
       // Pre-plan only after lyrics resolved
+      // art7: lyrics-first direction — classify the aligned sheet (tender/breakup vs violent)
+      let lyricMood = null;
+      try { lyricMood = analyzeLyricMood(this.alignment.phrases, { timing: this.alignment.timingSource, repaired: !!this.alignment.timingRepaired }); } catch (_) { lyricMood = null; }
+      try { globalThis.__LS_LYRMOOD__ = lyricMood ? { ...lyricMood, timed: undefined } : null; } catch (_) { /* soft */ }
       this.director.prePlan({
+        lyricMood,
         duration: this.duration || 180,
         sections,
         semantic: sem,
@@ -432,7 +454,7 @@ class LightShowApp {
         const name = label.split(' (')[0];
         if (name && name !== 'Microphone live' && name !== 'No audio selected') {
           localStorage.setItem('lightshow_profile_' + name, JSON.stringify({
-            lyrics: settings.lyrics,
+            lyrics: this._songLyricFree ? '' : settings.lyrics, // art7: never store a sheet for an instrumental
             fantasy: settings.fantasy,
             mood: settings.mood,
             styles: settings.styles,
@@ -514,6 +536,8 @@ class LightShowApp {
     }
 
     const section = this.structure.sectionAt(t);
+    // Lyrics Brain idgate: rule 5 live vocal check — no vocals 60s after first line → lyric-free scenic
+    if (this.alignment.noteVocal?.(t, vocal, audio)) this.controls.setStatus('Instrumental / no matching lyrics: scenic mode', 'warn');
     const lyricState = this.alignment.update(t, vocal, section);
 
     // LIVE lyric→scene: on phrase/line advance, extractLine + reactToLyricConcept (props RT)
@@ -560,6 +584,7 @@ class LightShowApp {
       section,
       emotion,
       activePhrase: lyricState.phrase,
+      lyricsLive: !!(this.settings?.lyricsOn && this.alignment.phrases.length), // art7: idgate drop → audio rules again
       now
     });
 
@@ -615,7 +640,31 @@ class LightShowApp {
     }
   }
 
+  /**
+   * art7 (QA-0350 P0): stale lyrics bled into the next song (Josh → Exit → Night Owl showed Josh
+   * captions). On a new file, a new song ID or Exit, wipe EVERY lyric layer: textarea, parsed
+   * lines + alignment (incl. the Lyrics Brain idgate vocal state, via setPhrases([])), caption
+   * caches, the parser's last gate verdict and the planner's lyric/motif memory.
+   */
+  _resetLyricsForNewSong(reason = '') {
+    try { this.controls.setLyricsText(''); } catch (_) { /* soft */ }
+    this._lyricsResolved = false;
+    this._songLyricFree = false;
+    this._lastLyricKey = '';
+    this._lyricSongKey = null;
+    try { this.alignment.setPhrases([], 0); } catch (_) { /* soft */ }
+    try { if (this.lyricsParser) this.lyricsParser.lastGate = null; } catch (_) { /* soft */ }
+    try { this.renderer.resetLyricCaches?.(); } catch (_) { /* soft */ }
+    try { this.director.resetLyricMemory?.(); } catch (_) { /* soft */ }
+    if (this.settings) { this.settings.lyrics = ''; }
+    this._lyricResetReason = reason;
+  }
+
   _exitShow() {
+    this._resetLyricsForNewSong('exit'); // art7 P0
+    // art5 (QA-0244 #2): chips tapped mid-show don't silently carry into the next song —
+    // restore the setup-screen selection (the defaults unless the user changed them there).
+    try { this.controls.resetStylesToSetup?.(); } catch (_) { /* soft */ }
     this.playing = false;
     this._awaitingGesture = false;
     this._generating = false;

@@ -55,9 +55,28 @@ function ik(S, T, L1, L2, outX) {
 }
 
 /** Build the pose in height units (X right, Y up from the ground; full height ≈ 100). */
-function pose(look, t, k, e, hv, side) {
+/** art6: side-on walk cycle (the dreamer walking through the world as the camera tracks). */
+function walkPose(t, ph, f, e) {
+  const sw = Math.sin(ph), cw = Math.cos(ph);
+  const hipX = 0, hipY = 49.5 - 1.1 * Math.abs(cw);
+  const lean = 1.2 * f;
+  const shC = [hipX + lean, hipY + 31.5];
+  const shL = [shC[0] - 2.6, shC[1] + 0.3], shR = [shC[0] + 2.6, shC[1] - 0.3];
+  const head = [shC[0] + 1.3 * f, shC[1] + 11.8];
+  const hipL = [hipX - 1.4, hipY], hipR = [hipX + 1.4, hipY];
+  const ankL = [f * 8.5 * sw, 4 + Math.max(0, cw) * 3.2], ankR = [-f * 8.5 * sw, 4 + Math.max(0, -cw) * 3.2];
+  const [kneeL] = ik(hipL, ankL, 24.5, 23, f);
+  const [kneeR] = ik(hipR, ankR, 24.5, 23, f);
+  const tL = [shC[0] - f * (6 + 2 * e) * sw, 60 + 1.5 * Math.abs(sw)], tR = [shC[0] + f * (6 + 2 * e) * sw, 60 + 1.5 * Math.abs(sw)];
+  const [elL, haL] = ik(shL, tL, 16.5, 15, -f);
+  const [elR, haR] = ik(shR, tR, 16.5, 15, -f);
+  return { ph, sw: sw * 0.4, hipX, hipY, shC, shL, shR, head, hipL, hipR, kneeL, kneeR, ankL, ankR, elL, elR, haL, haR, prop: null, shW: 2.6, lean, walk: true, facing: f };
+}
+
+function pose(look, t, k, e, hv, side, beatPh = null, move = null, facing = 1) {
   const w = lerp(1.2, 2.5, hv);
-  const ph = t * w + k * 1.7;
+  const ph = beatPh != null ? beatPh : t * w + k * 1.7;
+  if (move === 'walk') return walkPose(t, ph, facing >= 0 ? 1 : -1, e);
   const amp = lerp(0.35 + 0.3 * e, 0.65 + 0.35 * e, hv);
   const sw = Math.sin(ph) * amp;
   const bob = (0.5 - 0.5 * Math.cos(2 * ph)) * lerp(0.8, 1.15, hv) * amp;
@@ -93,6 +112,9 @@ function pose(look, t, k, e, hv, side) {
     free[0] += shC[0];
     if (micSide > 0) { tR = mic; tL = free; } else { tL = mic; tR = free; }
     prop = { kind: 'mic', at: micSide > 0 ? 'R' : 'L', mouth: [head[0] + 2.4 * micSide, head[1] - 3.6] };
+  } else if (look === 'wanderer') { // art6: no props — hands relaxed by the sides, a little sway
+    tL = [shC[0] - 12.5 + 1.2 * Math.sin(ph), 54 + 2 * Math.sin(ph + 0.5)];
+    tR = [shC[0] + 12.5 + 1.2 * Math.sin(ph), 54 + 2 * Math.sin(ph + 2.1)];
   } else if (look === 'guitarist' || look === 'bassist') {
     const bass = look === 'bassist';
     const G = [hipX + 2.5, bass ? 52 : 55];
@@ -110,6 +132,38 @@ function pose(look, t, k, e, hv, side) {
     tL = [shC[0] - 9 - 3 * p1, 68 + 10 * p1 + hard * 26 * p1];
     tR = [shC[0] + 9 + 3 * p2, 68 + 10 * p2 + hard * 8 * p2];
   }
+  // art5: named dance moves (picked per section / energy in the renderer, blended over 0.7s)
+  const beat = Math.max(0, Math.cos(ph * 2)); // 1 on each beat-ish, 0 between
+  const bob2 = (0.5 - 0.5 * Math.cos(ph * 2));
+  const moveTorso = (dx, dy, dh) => { for (const q of [shC, shL, shR]) { q[0] += dx; q[1] += dy; } head[0] += dx + (dh || 0); head[1] += dy - Math.abs(dh || 0) * 0.4; };
+  switch (move) {
+    case 'reach': { // free hand stretches out toward the camera side, slow
+      const fs = look === 'vocalist' && prop ? (prop.at === 'R' ? 'L' : 'R') : 'L';
+      const tg = [shC[0] + (fs === 'L' ? -1 : 1) * (21 + 2 * Math.sin(ph * 0.5)), 84 + 6 * Math.sin(ph * 0.5)];
+      if (fs === 'L') tL = tg; else tR = tg; break; }
+    case 'fist': { // free fist pumps up on the beat
+      const fs = prop && prop.at === 'R' ? 'L' : 'R';
+      const tg = [shC[0] + (fs === 'L' ? -1 : 1) * 9, 92 + 16 * beat];
+      if (fs === 'L') tL = tg; else tR = tg; break; }
+    case 'lean': moveTorso(-side * 2.2, -0.5, -side * 1.2); { const fs = prop && prop.at === 'R' ? 'L' : 'R'; const tg = [shC[0] + (fs === 'L' ? -1 : 1) * 24, 62 + 4 * Math.sin(ph)]; if (fs === 'L') tL = tg; else tR = tg; } break;
+    case 'headbang': moveTorso(0, -2.6 * beat, 1.6 * beat); break;
+    case 'rock': moveTorso(-1.6, 0.4, -1.2); if (prop && prop.N) { prop.N = [prop.N[0], prop.N[1] + 7]; tL = [lerp(prop.G[0], prop.N[0], 0.62), lerp(prop.G[1], prop.N[1], 0.62) - 1]; } break;
+    case 'step': { const s2 = Math.sin(ph); ankL[0] += -3 * Math.max(0, s2); ankR[0] += 3 * Math.max(0, -s2); if (look === 'rhythm') { tL = [shC[0] - 13 - 4 * s2, 58 + 4 * Math.abs(s2)]; tR = [shC[0] + 13 - 4 * s2, 58 + 4 * Math.abs(s2)]; } break; }
+    case 'clap': { const c = beat; tL = [shC[0] - lerp(13, 2.2, c), 74 + 6 * c]; tR = [shC[0] + lerp(13, 2.2, c), 74 + 6 * c]; break; }
+    case 'point': tR = [shC[0] + 12 + 3 * beat, 104 + 6 * beat]; tL = [shC[0] - 12, 62 + 6 * bob2]; break;
+    case 'armsup': tL = [shC[0] - 9 + 5 * Math.sin(ph), 104 + 4 * Math.cos(ph)]; tR = [shC[0] + 9 + 5 * Math.sin(ph), 104 + 4 * Math.cos(ph + 1)]; break;
+    case 'hips': { const hs2 = Math.sin(ph) * 3.4; hipL[0] += hs2; hipR[0] += hs2; tL = [hipL[0] - 7, hipL[1] + 6]; tR = [hipR[0] + 7, hipR[1] + 6]; break; }
+    case 'wave': { const wv = Math.sin(ph); tL = [shC[0] - 21, 76 + 14 * wv]; tR = [shC[0] + 21, 76 - 14 * wv]; break; }
+    case 'groove': moveTorso(0, -1.2 * bob2, 0); break;
+    case 'idle': break; // standing, looking into the world
+    case 'gaze': tR = [head[0] + 4, head[1] + 1]; break; // shading the eyes, looking out over the vista
+    case 'open': tL = [shC[0] - 22, 70 + 3 * Math.sin(ph * 0.5)]; tR = [shC[0] + 22, 70 + 3 * Math.sin(ph * 0.5 + 1)]; break; // arms opening to the sky
+    default: break; // sway / strum / flow / pump = base pose
+  }
+  if (move === 'step' || move === 'hips') {
+    [kneeL] = ik(hipL, ankL, 24.5, 23, -1); [kneeR] = ik(hipR, ankR, 24.5, 23, 1);
+    kneeL = kx(kneeL, hipL, ankL); kneeR = kx(kneeR, hipR, ankR);
+  }
   const [elL, haL] = ik(shL, tL, 16.5, 15, -1);
   const [elR, haR] = ik(shR, tR, 16.5, 15, 1);
   return { ph, sw, hipX, hipY, shC, shL, shR, head, hipL, hipR, kneeL, kneeR, ankL, ankR, elL, elR, haL, haR, prop, shW, lean };
@@ -123,7 +177,19 @@ export function drawPerformer(ctx, o) {
   st.e += (Math.min(1, o.energy || 0) - st.e) * Math.min(1, dt * 2.5);
   st.hv += ((o.hard ? 1 : 0) - st.hv) * Math.min(1, dt * 1.2);
   const side = o.lightSide || 1;
-  const P = pose(look, t, k, st.e, st.hv, side);
+  let P = pose(look, t, k, st.e, st.hv, side, o.beatPh ?? null, o.move || null, o.facing ?? 1);
+  if (o.moveFrom && o.moveFrom !== o.move && (o.moveMix ?? 1) < 1) {
+    // ease between two moves (smoothstep), joint by joint
+    const P0 = pose(look, t, k, st.e, st.hv, side, o.beatPh ?? null, o.moveFrom, o.facing ?? 1);
+    const m = o.moveMix, sm = m * m * (3 - 2 * m);
+    const mixV = (a, b) => (Array.isArray(a) && Array.isArray(b)) ? a.map((v, j) => (typeof v === 'number' && typeof b[j] === 'number') ? lerp(v, b[j], sm) : b[j]) : b;
+    for (const key of Object.keys(P)) {
+      const a = P0[key], b = P[key];
+      if (typeof b === 'number' && typeof a === 'number') P[key] = lerp(a, b, sm);
+      else if (Array.isArray(b)) P[key] = mixV(a, b);
+    }
+    if (P.prop && P0.prop) for (const key of ['G', 'N', 'mouth']) if (P.prop[key] && P0.prop[key]) P.prop[key] = mixV(P0.prop[key], P.prop[key]);
+  }
   const u = H / 100;
   const S = Math.max(1, Math.min(3, (ctx.getTransform ? ctx.getTransform().a : 1)));
   const BW = 110, BT = 132, BB = 8; // local box in height units
@@ -158,7 +224,7 @@ export function drawPerformer(ctx, o) {
   const calf = (k0, a0) => circ([lerp(k0[0], a0[0], 0.3), lerp(k0[1], a0[1], 0.3)], shinR + 0.45);
   calf(kneeL, ankL); calf(kneeR, ankR);
   const shoe = (a, dir) => caps([a[0], a[1] - 1.5], [a[0] + dir * 5.2, a[1] - 3], 2.4, 1.9);
-  shoe(ankL, -1); shoe(ankR, 1);
+  if (P.walk) { shoe(ankL, P.facing); shoe(ankR, P.facing); } else { shoe(ankL, -1); shoe(ankR, 1); }
   // torso: shoulders → waist taper → hips
   const dancer = look === 'dancer';
   const waistW = dancer ? 5.8 : look === 'rhythm' ? 9 : 7.2, hipW = dancer ? 8.6 : 8.2;
@@ -167,7 +233,7 @@ export function drawPerformer(ctx, o) {
   circ(shL, 4.3); circ(shR, 4.3); // deltoids
   circ([shC[0], shC[1] - 6.5], dancer ? 6.2 : 8.2); // rounded chest/ribcage
   // outfit silhouettes
-  if (look === 'vocalist') { // long coat to the knee, hem swings behind the motion
+  if (look === 'vocalist' || look === 'wanderer') { // long coat to the knee, hem swings behind the motion
     // two open-front panels: legs stay readable between them, hems lag the motion
     const hem = 31, fl = 11.5 + 1.2 * Math.abs(sw), lag = -sw * 2.6;
     poly([[shL[0] - 1.5, shL[1] - 1], [hipX - hipW - 1.8, hipY], [hipX - fl + lag, hem], [hipX - 3.2 + lag, hem + 1.5], [hipX - 0.6, hipY + 5], [shC[0] - 2, shC[1] - 4]], false);
@@ -207,7 +273,11 @@ export function drawPerformer(ctx, o) {
   g.fill();
   // hair / headwear
   const hs = -sw * 1.6;
-  if (look === 'vocalist') {
+  if (look === 'wanderer') {
+    // seen from behind: hair covers the whole back of the head and falls to the nape
+    poly([[head[0] - 5.8, head[1] - 4.5], [head[0] - 6.2, head[1] + 2.5], [head[0] - 3.6, head[1] + 7.4], [head[0] + 0.4, head[1] + 8.1],
+      [head[0] + 4.4, head[1] + 7.2], [head[0] + 6.2, head[1] + 2.5], [head[0] + 5.8 + hs * 0.5, head[1] - 4.8], [head[0] + 2.5 + hs * 0.8, head[1] - 7.6], [head[0] - 2.5 + hs * 0.8, head[1] - 7.6]], true);
+  } else if (look === 'vocalist') {
     // swept-back crop with volume on top and a fringe falling toward the light side
     poly([[head[0] - 5.6, head[1] - 1], [head[0] - 6.0, head[1] + 3.5], [head[0] - 3.5, head[1] + 7.2], [head[0] + 0.5, head[1] + 8.0],
       [head[0] + 4.6, head[1] + 6.6], [head[0] + 6.4 + hs * 0.6, head[1] + 3.0], [head[0] + 6.8 + hs, head[1] - 2.4], [head[0] + 5.0, head[1] + 1.2], [head[0] - 4.8, head[1] + 2.2]], true);
@@ -266,7 +336,8 @@ export function drawPerformer(ctx, o) {
   b.lineCap = 'round'; b.lineJoin = 'round';
   const line = (pts, col, wd) => { const q = pts.map(L); b.strokeStyle = col; b.lineWidth = wd * u; b.beginPath(); b.moveTo(q[0][0], q[0][1]); for (let i = 1; i < q.length; i++) b.lineTo(q[i][0], q[i][1]); b.stroke(); };
   const det = rgba(rimCol, 0.22), soft = 'rgba(255,255,255,0.07)';
-  if (look === 'vocalist') { line([[shC[0] - 3, shC[1]], [hipX - 1, hipY + 6], [hipX - 1.2, 28]], det, 0.5); line([[shC[0] + 3, shC[1]], [hipX + 1, hipY + 6]], soft, 0.45); line([[hipX - 8, hipY + 2], [hipX + 8, hipY + 2]], soft, 0.6); }
+  if (look === 'wanderer') { line([[shC[0], shC[1] - 1], [hipX, 30]], det, 0.45); line([[hipX - 7, hipY + 3], [hipX + 7, hipY + 3]], soft, 0.5); } // back seam + belt
+  else if (look === 'vocalist') { line([[shC[0] - 3, shC[1]], [hipX - 1, hipY + 6], [hipX - 1.2, 28]], det, 0.5); line([[shC[0] + 3, shC[1]], [hipX + 1, hipY + 6]], soft, 0.45); line([[hipX - 8, hipY + 2], [hipX + 8, hipY + 2]], soft, 0.6); }
   else if (look === 'guitarist') { line([[shC[0] - 2.5, shC[1]], [hipX - 1.5, hipY - 2]], det, 0.45); line([[shC[0] + 2.5, shC[1]], [hipX + 1.5, hipY - 2]], soft, 0.45); }
   else if (look === 'bassist') { line([[head[0] - 1, head[1] - 7.5], [head[0] - 1.4, head[1] - 12]], det, 0.35); line([[head[0] + 1, head[1] - 7.5], [head[0] + 1.4, head[1] - 12]], det, 0.35); line([[hipX - 6, hipY + 6], [hipX + 6, hipY + 6]], soft, 0.5); }
   else if (dancer) { line([[wX - waistW, wY], [wX + waistW, wY]], det, 0.55); line([[hipX - 4, hipY], [hipX - 8 - sw * 3, 31]], soft, 0.4); line([[hipX + 4, hipY], [hipX + 8 - sw * 3, 31]], soft, 0.4); }
@@ -292,8 +363,9 @@ export function drawPerformer(ctx, o) {
   ctx.globalAlpha = 0.28 * op;
   ctx.drawImage(st.r, ox - side * 0.8 * u, oy - 0.3 * u, dw, dh);
   // main rim on the light side (blurred halo edge)
-  ctx.globalAlpha = 0.9 * op;
-  ctx.shadowColor = rgba(rimCol, 0.85); ctx.shadowBlur = 3.2 * u;
+  const glow = Math.max(0, Math.min(1, o.glow || 0)); // art6: vocals → the dreamer's glow
+  ctx.globalAlpha = Math.min(1, 0.8 + 0.3 * glow) * op;
+  ctx.shadowColor = rgba(rimCol, 0.85); ctx.shadowBlur = 3.2 * u * (1 + 1.8 * glow);
   ctx.drawImage(st.r, ox + side * 1.25 * u, oy - 0.5 * u, dw, dh);
   ctx.shadowBlur = 0; ctx.shadowColor = 'rgba(0,0,0,0)';
   ctx.globalAlpha = op;

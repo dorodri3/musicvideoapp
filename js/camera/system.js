@@ -50,7 +50,7 @@ import {
   clampZoom,
   decayToward,
   smooth01,
-} from './framing.js';
+} from './framing.js?v=art8';
 
 export class CameraSystem {
   constructor() {

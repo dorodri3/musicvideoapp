@@ -111,6 +111,10 @@ export class Controls {
       });
     }
 
+    // art5: the setup screen owns the "home" chip selection (HTML defaults until the user edits
+    // it there). Overlay taps during a show are temporary; resetStylesToSetup() restores this.
+    const setupChips = () => [...this.root.querySelectorAll('[data-style]')].filter(n => !n.closest('.overlay-styles'));
+    this._setupStyles = new Set(setupChips().filter(n => n.classList.contains('active')).map(n => n.dataset.style));
     this.root.querySelectorAll('[data-style]').forEach(el => {
       el.addEventListener('click', () => {
         const style = el.dataset.style;
@@ -119,6 +123,9 @@ export class Controls {
         this.root.querySelectorAll('[data-style]').forEach((n) => {
           if (n.dataset.style === style) n.classList.toggle('active', next);
         });
+        if (!el.closest('.overlay-styles')) {
+          if (next) this._setupStyles.add(style); else this._setupStyles.delete(style);
+        }
       });
     });
 
@@ -163,6 +170,14 @@ export class Controls {
     if ($('btn-fullscreen')) {
       $('btn-fullscreen').addEventListener('click', () => this.emit('fullscreen'));
     }
+  }
+
+  /** art5: put every chip (setup + overlay) back to the setup-screen selection. */
+  resetStylesToSetup() {
+    if (!this._setupStyles) return;
+    this.root.querySelectorAll('[data-style]').forEach((n) => {
+      n.classList.toggle('active', this._setupStyles.has(n.dataset.style));
+    });
   }
 
   getSettings() {
@@ -305,7 +320,7 @@ export class Controls {
       info.event || '',
       info.fps ? `${info.fps}fps` : ''
     ].filter(Boolean).join(' · ');
-    // HOLD-0321 proof HUD (?v=art4 / ?debug=hardlock / settings)
+    // HOLD-0321 proof HUD (?v=art7 / ?debug=hardlock / settings)
     if (info.proof) {
       const bits = [
         `hardOnly=${info.hardOnly ? 1 : 0}`,

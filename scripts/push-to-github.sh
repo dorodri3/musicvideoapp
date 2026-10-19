@@ -84,6 +84,18 @@ if [[ ! -f "$DEST/.gitignore" ]]; then
   printf '%s\n' node_modules/ .DS_Store '*.log' .env .env.* '*.pem' secrets/ __pycache__/ .cache/ .cloudflared/ tmp/ '*.wav' '*.mp3' '*.flac' '*.m4a' > "$DEST/.gitignore"
 fi
 
+# GH_TOKEN / GITHUB_TOKEN (a fine-grained PAT without write access here) override gh's stored
+# login, which has repo scope -> 403. Push with those unset and gh's stored login as the helper.
+GH_BIN="$(command -v gh || true)"
+[[ -x /usr/local/bin/gh ]] && GH_BIN=/usr/local/bin/gh
+if [[ -z "$GH_BIN" ]]; then
+  echo "gh not found; cannot authenticate push" >&2
+  exit 1
+fi
+git_push() {
+  env -u GH_TOKEN -u GITHUB_TOKEN git -c credential.helper= -c "credential.helper=!$GH_BIN auth git-credential" push origin main
+}
+
 cd "$DEST"
 git add -A
 if git diff --cached --quiet; then
@@ -92,7 +104,7 @@ else
   git commit -m "$MSG"
 fi
 
-git push origin main
+git_push
 
 SHA=$(git rev-parse HEAD)
 STAMP=$(TZ=America/Los_Angeles date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')
@@ -101,14 +113,14 @@ cp -a "$NOTES/GITHUB-REMOTE.txt" "$DEST/versions/GITHUB-REMOTE.txt"
 git add versions/GITHUB-REMOTE.txt
 if ! git diff --cached --quiet; then
   git commit -m "Record pushed SHA in GITHUB-REMOTE.txt"
-  git push origin main
+  git_push
   SHA=$(git rev-parse HEAD)
   STAMP=$(TZ=America/Los_Angeles date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')
   printf 'repo=%s\ncommit=%s\npushed=%s\n' "$REMOTE_URL" "$SHA" "$STAMP" > "$NOTES/GITHUB-REMOTE.txt"
   cp -a "$NOTES/GITHUB-REMOTE.txt" "$DEST/versions/GITHUB-REMOTE.txt"
   git add versions/GITHUB-REMOTE.txt
   git commit -m "Record pushed SHA in GITHUB-REMOTE.txt"
-  git push origin main
+  git_push
 fi
 
 echo "pushed $REMOTE_URL"

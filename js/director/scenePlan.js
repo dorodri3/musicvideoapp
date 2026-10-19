@@ -15,19 +15,20 @@
  * lyricStickExpire / sectionChangeId: when section TYPE or chorus.repeat changes,
  * Visual Engine / Lyrics Brain clear sticky last-good phrase (Quality gap 5).
  */
-import { NarrativeState } from './narrativeState.js?v=art4';
-import { VariationController } from './variation.js';
-import { ScaleDirector } from './scale.js';
-import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=art4';
-import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=art4';
-import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=art4';
+import { NarrativeState } from './narrativeState.js?v=art8';
+import { lineAt, LYRIC_LED_BLOCKED, LYRIC_POOL_INTENSE, LYRIC_POOL_TENDER } from './lyricMood.js?v=art8';
+import { VariationController } from './variation.js?v=art8';
+import { ScaleDirector } from './scale.js?v=art8';
+import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=art8';
+import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=art8';
+import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=art8';
 import {
   dominantVibe, vibePackFamily, vibeLeadPresets, vibeForbiddenPresets, genreLeadPresets,
   genreForbiddenPresets, ladderLeadPresets, resolveLadder, isAggressiveVibe, ladderStepChanged,
   inferSpeechLikeFromRoles, readVibe, readMoment, STICKY_MS, PIN_HOLD_MS, ESCAPE_MS, AGGRESSION_THRESH,
   hardLockPresets, isHardLockPreset, softForbiddenUnderHard, isSoftForbiddenUnderHard
-} from './vibeCast.js?v=art4';
-import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=art4';
+} from './vibeCast.js?v=art8';
+import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=art8';
 
 const SECTION_INTENTS = {
   intro: {
@@ -332,8 +333,10 @@ export class ScenePlanner {
     this._styleHoldUntil = 0;
     this._styleHeldPreset = null;
     this._stylePolarity = null;
+    this._styleRecent = []; this._styleLastTap = null; // art5: chip tap recency is per show
     // art4: new show → fresh song polarity lock + hysteresis
     this._songPol = null; this._songPolTrack = undefined; this._polTrack = undefined;
+    this._lyricMood = opts?.lyricMood || null; this._lyr = null; // art7: lyrics-first direction profile (per song)
 
     // Peaceful/calm or nature language must seed the nature world before roulette.
     const moodKey = String(mood || '').toLowerCase();
@@ -1521,6 +1524,13 @@ export class ScenePlanner {
     if (SP.locked === 'soft') hardOnly = false;
     else if (SP.locked === 'hard') hardOnly = true;
     else hardOnly = !!this._polOut && (songAge < 3000 || SP.hard);
+    // art7 (QA-0350 direction): LYRICS FIRST. A confident synced sheet that reads tender / longing /
+    // breakup (lyricMood.led) steers the worlds even when the audio is loud: the HARD_LOCK pool
+    // (warzone tank, red void) is off; _enforceLyricWorld picks intense-but-emotional painted worlds
+    // from the line imagery instead. audioHard still marks a loud song (faster cuts, storm on anguish).
+    const lyricLed = !!(this._lyricMood && this._lyricMood.led && ctx.lyricsLive !== false);
+    const audioHard = !!hardOnly;
+    if (lyricLed) hardOnly = false;
 
     const hardHud = {
       hardOnly: !!hardOnly,
@@ -1560,6 +1570,7 @@ export class ScenePlanner {
       packFamily: hardOnly ? 'chaos' : (this.narrative.getPackFamily?.() || null),
       ladder: hardOnly ? 'aggressive' : (ladderLive || null)
     };
+    hardHud.lyricLed = lyricLed; hardHud.audioHard = audioHard; hardHud.lyricMood = this._lyricMood?.mood || null;
     this._hardHud = hardHud;
     try {
       if (typeof globalThis !== 'undefined') globalThis.__LS_HARD__ = hardHud;
@@ -1834,7 +1845,8 @@ export class ScenePlanner {
     }
     // HOLD-stylechips: after the hard assert, a selected chip still wins among HARD_LOCK
     // ids (or soft worlds when hardOnly is false). Lyric hops cannot stick.
-    this._enforceStyleWorld(now, !!hardOnly);
+    if (lyricLed) this._enforceLyricWorld(now, time, audioHard);
+    else this._enforceStyleWorld(now, !!hardOnly);
     if (hardOnly && this.currentPreset && !isHardLockPreset(this.currentPreset)) {
       this.currentPreset = hardLockPresets()[0];
     }
@@ -1962,6 +1974,8 @@ export class ScenePlanner {
       // HOLD-0321 proof HUD — Works Tester: directive + console __LS_HARD__
       hardOnly: !!hardOnly,
       hardLock: !!hardOnly,
+      lyricLed: !!lyricLed,
+      audioHard: !!audioHard,
       hardLatchUntil: this._hardLatchUntil || 0,
       hardLatchMsLeft: Math.max(0, Math.round((this._hardLatchUntil || 0) - now)),
       pinLive: !!pinLive,
@@ -2497,9 +2511,81 @@ export class ScenePlanner {
    * @param {string[]|string} styles
    * @returns {string[]}
    */
-  setStyles(styles) {
+  /**
+   * art7: lyric-led world choice (replaces _enforceStyleWorld while lyricLed).
+   *  - a new line with concrete imagery (city lights, ocean, stars, rain, fire …) pulls its world
+   *    (crossfade lands as the line starts: 1s look-ahead), after a short minimum hold;
+   *  - storm only for anguish lines while the audio is loud (max 12s, then 15s cooldown);
+   *  - between imagery lines, rotate an intense-emotional (loud) or tender (quiet) pool;
+   *  - a chip tap jumps to the tapped chip's first allowed world and holds it ~8s;
+   *  - never apocalyptic_warzone / red_void / fracture.
+   */
+  _enforceLyricWorld(now, t, intense) {
+    const LM = this._lyricMood;
+    const S = this._lyr || (this._lyr = { held: null, since: 0, lineIdx: -1, stormCool: 0, chipUntil: 0, tapSeq: this._styleTapSeq || 0, why: 'start', recent: [] });
+    const ln = lineAt(LM, t, 1.0);
+    const holdMin = intense ? 4500 : 6000;
+    const rotMs = intense ? 10000 : 12000;
+    const ok = (id) => id && ART_PLATE_IDS.includes(id) && !LYRIC_LED_BLOCKED.includes(id);
+    let want = null, why = '';
+    if ((this._styleTapSeq || 0) !== S.tapSeq) {
+      S.tapSeq = this._styleTapSeq || 0;
+      const b = [...this._styleBundle(false), ...this._styleBundle(true)].filter(ok);
+      if (b.length) { want = b[0]; why = 'chip'; S.chipUntil = now + 8000; }
+    }
+    if (!want && ln && ln.idx !== S.lineIdx && now >= S.chipUntil) {
+      S.lineIdx = ln.idx;
+      let w = ln.world;
+      if (w === 'storm' && !intense) w = 'rainy_city';
+      if (!w && ln.anguish && intense && now >= S.stormCool && S.held !== 'storm') w = 'storm';
+      if (ok(w)) { want = w; why = 'line'; S.pending = { world: w, idx: ln.idx }; }
+    }
+    // a line world held back by the minimum hold still lands while its line is on screen
+    if (!want && S.pending && ln && ln.idx === S.pending.idx && now >= S.chipUntil && S.pending.world !== S.held) { want = S.pending.world; why = 'line'; }
+    if (S.pending && (!ln || ln.idx !== S.pending.idx || S.pending.world === S.held)) S.pending = null;
+    if (S.held === 'storm' && now - S.since > 12000 && !want) { why = 'storm-cap'; }
+    const onLineWorld = !!(ln && ln.world && ln.world === S.held); // the line's own world is up → don't rotate away mid-line
+    const soon = lineAt(LM, t, 3.0); // an imagery line is about to start → let it pick, don't rotate first
+    const imageryDue = !!(soon && soon.idx !== (ln ? ln.idx : -1) && ok(soon.world) && soon.world !== 'storm');
+    if (!want && (S.held == null || (now - S.since >= rotMs && !onLineWorld && !imageryDue) || why === 'storm-cap')) {
+      const pool = intense ? LYRIC_POOL_INTENSE : LYRIC_POOL_TENDER;
+      const cand = pool.filter(p => ok(p) && p !== S.held && !S.recent.slice(-2).includes(p));
+      const first = S.held == null ? (LM?.timed?.find(x => ok(x.world) && x.world !== 'storm')?.world || pool[0]) : null;
+      want = first || cand[(S.recent.length) % Math.max(1, cand.length)] || pool[0];
+      why = S.held == null ? 'start' : (why || 'rotate');
+    }
+    const canSwitch = want && want !== S.held && (S.held == null || why === 'chip' || why === 'rotate' || why === 'storm-cap' || now - S.since >= holdMin);
+    if (canSwitch) {
+      const from = S.held || (ok(this.currentPreset) ? this.currentPreset : want);
+      const hardPair = isHardLockPreset(from) && isHardLockPreset(want);
+      this.transition = { from, to: want, start: now, duration: hardPair ? 260 : (intense ? 600 : 900), mode: hardPair ? 'cut' : 'morph' };
+      if (S.held === 'storm') S.stormCool = now + 15000;
+      S.held = want; S.since = now; S.why = why; S.recent.push(want); if (S.recent.length > 6) S.recent.shift();
+      try { this.variation.recordScene(want, now); } catch (_) { /* soft */ }
+    }
+    // other paths (live lyric hops, vibe repair) may have moved the id this frame: the lyric world owns it
+    if (this.currentPreset !== S.held) this.currentPreset = S.held;
+    if (this.transition && this.transition.to !== S.held) this.transition = null;
+    this._styleHeldPreset = null;
+    this._packHoldUntil = Math.max(this._packHoldUntil || 0, now + holdMin);
+    this._liveSteerPreset = null;
+    this._liveSteerUntil = 0;
+    try { globalThis.__LS_LYR__ = { led: true, mood: LM?.mood, world: S.held, why: S.why, intense: !!intense, line: ln?.text || null, lineWorld: ln?.world || null, anguish: !!ln?.anguish }; } catch (_) { /* soft */ }
+  }
+
+  /** art7 P0: forget the previous song's lyric concepts, motifs and live steers (Exit / new song). */
+  resetLyricMemory() {
+    try { this.narrative?.reset?.(); } catch (_) { /* soft */ }
+    this._liveConcept = null; this._liveConceptAt = 0; this._liveTint = null;
+    this._liveSteerUntil = 0; this._liveSteerPreset = null;
+    this._lastPhraseKey = ''; this._lastLineChangeId = ''; this._liveLineProps = [];
+    this._speechSteer = 0;
+    this._lyricMood = null; // art7: lyrics-first direction profile
+  }
+
+  setStyles(styles, opts = {}) {
     const arr = Array.isArray(styles) ? styles : (styles == null || styles === '' ? [] : String(styles).split(/[,|]/));
-    const list = [];
+    let list = [];
     const seen = new Set();
     for (const item of arr) {
       const id = String(item || '').trim().toLowerCase();
@@ -2507,6 +2593,18 @@ export class ScenePlanner {
       seen.add(id);
       list.push(id);
     }
+    // art5 (QA-0244 #1): most recent tap wins. Cinematic stays on by default, so a Sci-Fi tap
+    // used to land on cinematic's head (rainy_city). Order the active chips by tap recency so the
+    // bundle head — and the world we jump to — is the TAPPED chip's first world in the current
+    // mood; the other selected chips stay in the bundle for rotation afterwards.
+    const tapped = opts && opts.tapped ? String(opts.tapped).trim().toLowerCase() : '';
+    if (!Array.isArray(this._styleRecent)) this._styleRecent = [];
+    if (tapped && list.includes(tapped)) this._styleRecent = [tapped, ...this._styleRecent.filter(x => x !== tapped)];
+    this._styleRecent = this._styleRecent.filter(x => list.includes(x));
+    const rank = id => { const i = this._styleRecent.indexOf(id); return i < 0 ? 1e3 + list.indexOf(id) : i; };
+    list = list.slice().sort((x, y) => rank(x) - rank(y));
+    this._styleLastTap = tapped && list.includes(tapped) ? tapped : this._styleLastTap;
+    this._styleTapSeq = (this._styleTapSeq || 0) + 1; // art7: lyric-led mode jumps to the tapped chip's world
     if (!this.plan) {
       this.plan = {
         theme: '',

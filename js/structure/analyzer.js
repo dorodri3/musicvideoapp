@@ -27,8 +27,44 @@ export class StructureAnalyzer {
     } else {
       this.sections = this._energyScaffold(d, bpm);
     }
+    this.sections = this._splitLongSections(this.sections, d, bpm);
     this._numberChorusRepeats(this.sections);
     return this.sections;
+  }
+
+  /**
+   * art5: never let one section swallow most of the song (Night Owl's broken LRC made 60–194s a
+   * single 'outro'). Any section longer than ~45s is re-cut with the energy scaffold over its span,
+   * keeping an intro/outro label at the song edges.
+   */
+  _splitLongSections(sections, d, bpm) {
+    const MAX = Math.max(45, d * 0.22);
+    if (!sections.some(s => s.end - s.start > MAX)) return sections;
+    const scaffold = this._energyScaffold(d, bpm);
+    const out = [];
+    for (const s of sections) {
+      if (s.end - s.start <= MAX) { out.push(s); continue; }
+      const pieces = [];
+      for (const k of scaffold) {
+        const a = Math.max(s.start, k.start), b = Math.min(s.end, k.end);
+        if (b - a <= 0) continue;
+        if (pieces.length && (b - a < 6 || pieces[pieces.length - 1].type === k.type)) pieces[pieces.length - 1].end = b;
+        else pieces.push({ type: k.type, start: a, end: b, label: k.type });
+      }
+      if (!pieces.length) { out.push(s); continue; }
+      if (pieces[0].end - pieces[0].start < 6 && pieces.length > 1) { pieces[1].start = pieces[0].start; pieces.shift(); }
+      if (s.type === 'intro') { pieces[0].type = 'intro'; pieces[0].label = 'intro'; }
+      if (s.type === 'outro') {
+        const last = pieces[pieces.length - 1];
+        if (last.type !== 'outro') {
+          const cut = Math.max(last.start + 6, s.end - Math.max(12, d * 0.06));
+          if (cut < last.end - 4) { pieces.push({ type: 'outro', start: cut, end: last.end, label: 'outro' }); last.end = cut; }
+          else { last.type = 'outro'; last.label = 'outro'; }
+        }
+      }
+      out.push(...pieces);
+    }
+    return out;
   }
 
   /** Always tag chorus.repeat 1..N for director motif escalation */
