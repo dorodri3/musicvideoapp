@@ -305,7 +305,7 @@ export class Controls {
       info.event || '',
       info.fps ? `${info.fps}fps` : ''
     ].filter(Boolean).join(' · ');
-    // HOLD-0321 proof HUD (?v=art1 / ?debug=hardlock / settings)
+    // HOLD-0321 proof HUD (?v=art4 / ?debug=hardlock / settings)
     if (info.proof) {
       const bits = [
         `hardOnly=${info.hardOnly ? 1 : 0}`,

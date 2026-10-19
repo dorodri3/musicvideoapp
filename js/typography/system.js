@@ -184,6 +184,14 @@ export class TypographySystem {
       fontSize = Math.min(phone ? 24 : 28, w / (phone ? 18 : 22));
     }
     fontSize *= 1 + Math.min(0.1, this.leadBoost * 0.14);
+    // art3: over painted plates the top caption and short lines read slightly larger (same soft shadow)
+    if (Number.isFinite(this.artAvoidTop)) {
+      const nWords = (this.words || []).length;
+      if (this.placement === 'horizon') fontSize *= 1.14;
+      if (nWords > 0 && nWords <= 6) fontSize *= 1.14;
+      fontSize = Math.max(fontSize, phone ? 19 : 22);
+      fontSize = Math.min(fontSize, phone ? 34 : 38);
+    }
 
     // Placement → y / x — HOLD-2149: edge only (y≥0.78h lower OR y≤0.18h top). Never mid-frame.
     let y;
@@ -205,7 +213,13 @@ export class TypographySystem {
     const lines = this._wrap(ctx, this.words, wrapW, fontSize);
     const lineH = fontSize * 1.28;
     const blockH = lines.length * lineH;
-    const blockTop = y - blockH / 2;
+    let blockTop = y - blockH / 2;
+    // art2: over a painted plate the cast stands on the lower third (heads ≈0.6h) —
+    // lift the lower caption above their heads so it never sits on their legs.
+    const artMode = Number.isFinite(this.artAvoidTop);
+    if (artMode && place === 'light_band' && blockTop + blockH > this.artAvoidTop) {
+      blockTop = this.artAvoidTop - blockH - h * 0.015;
+    }
 
     // P0 HOLD-2149: ZERO filled lyric plate/scrim/card — strokeText+fillText glyphs ONLY.
     // Plate helper + dark wash fill path removed (was opaque karaoke rounded card).
@@ -231,6 +245,16 @@ export class TypographySystem {
         ctx.globalAlpha = Math.min(0.88, drawAlpha * (active ? 1 : 0.9));
         ctx.shadowBlur = 0;
 
+        // art2: soft dark drop shadow so the caption reads over a busy painting (no plate/card)
+        if (artMode) {
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.85)';
+          ctx.shadowBlur = Math.max(8, fontSize * 0.55);
+          ctx.shadowOffsetY = Math.max(1, fontSize * 0.06);
+          ctx.fillStyle = 'rgba(0,0,0,0.55)';
+          ctx.fillText(word, x, ly);
+          ctx.restore();
+        }
         // Dark stroke under white fill for readability (no opaque plate)
         const strokeA = active ? 0.65 : 0.5;
         ctx.lineWidth = Math.max(2.2, fontSize * 0.09);

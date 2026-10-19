@@ -3,13 +3,14 @@
  * Roles animate HOW the world moves; lyrics direct WHAT world.
  * Prefer audio.roles || audio.instruments (see js/audio/ROLES.md).
  */
-import { ContinuityEngine } from '../scene/continuity.js?v=art1';
+import { ContinuityEngine } from '../scene/continuity.js?v=art4';
 import { CameraSystem } from '../camera/system.js';
-import { LightingSystem } from '../lighting/system.js?v=art1';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=art1';
-import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=art1';
+import { LightingSystem } from '../lighting/system.js?v=art4';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=art4';
+import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=art4';
 import { getMotionComfort } from '../a11y/motionPrefs.js';
-import { ArtPlates, drawHumanSilhouette } from './artPlates.js?v=art1';
+import { ArtPlates, ART_WORLDS, drawHumanSilhouette } from './artPlates.js?v=art4';
+import { drawPerformer, roleLook } from './performers.js?v=art4';
 
 
 /** HOLD-0330: module-level HUD — never depends on prototype lookup (TypeError-proof). */
@@ -1045,6 +1046,8 @@ export class Renderer {
     ctx.save();
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
+    // art2: screen-space transform for painted plates (camera never exposes black edges)
+    const _baseXform = ctx.getTransform();
 
     this.camera.apply(ctx, w, h, cam);
 
@@ -1083,8 +1086,19 @@ export class Renderer {
     this.continuity.draw(ctx, w, h, state, coherentTr);
     // art1: painted plate over procedural fallback (procedural bleeds through lightly)
     const _artPreset = this._pickArtWorld((coherentTr && coherentTr.to && coherentTr.progress < 1) ? coherentTr.to : state.preset, directive, audio, t);
-    this._artOn = this.art.drawBg(ctx, w, h, _artPreset, state, !!getMotionComfort().reduceMotion);
-    if (this._artOn) this.art.drawFg(ctx, w, h, state);
+    this._artOn = this.art.drawBg(ctx, w, h, _artPreset, state, !!getMotionComfort().reduceMotion, !!this._artHard, _baseXform);
+    // art2: old procedural fg layers are off; fg = light rain/embers/fireflies over the painting
+    if (this._artOn) this.art.drawFg(ctx, w, h, state, _baseXform, this.quality);
+    if (this._artOn) {
+      // art3: ease the cast ground line + stage x between worlds (no jump on world change)
+      const act = this.art.active();
+      const gT = this.art.ground(act), sT = this.art.stage(act);
+      const dtG = Math.min(0.1, Math.max(0, t - (this._artGT ?? t))); this._artGT = t;
+      const kG = 1 - Math.exp(-dtG * 1.8);
+      this._artG = this._artG == null ? gT : this._artG + (gT - this._artG) * kG;
+      this._artStage = this._artStage == null ? sT : this._artStage + (sT - this._artStage) * kG;
+    }
+    if (this.typography) this.typography.artAvoidTop = this._artOn ? h * ((this._artG ?? 0.8) - 0.25) : null; // above cast heads + raised hands
 
     // Through-screen scenic travel (parallax/drift/sweep) — not a static postcard
     if (!this._artOn) this._drawScenicTravel(ctx, w, h, state, directive);
@@ -1149,7 +1163,8 @@ export class Renderer {
     }
 
     // Kick → ground / horizon flash (_groundShake = flash intensity only, NOT camera)
-    if (this._kickFlash > 0.05 || this._groundShake > 2) {
+    // art2: no yellow ground wash over the painting — beat push lives in ArtPlates
+    if (!this._artOn && (this._kickFlash > 0.05 || this._groundShake > 2)) {
       const shakeBoost = Math.min(0.35, this._groundShake / 40);
       const kf = Math.min(1, this._kickFlash + shakeBoost);
       const g = ctx.createLinearGradient(0, h * 0.5, 0, h);
@@ -1161,7 +1176,7 @@ export class Renderer {
     }
 
     // Snare → mid-screen punch flash
-    if (this._snareFlash > 0.08) {
+    if (this._snareFlash > 0.08 && !this._artOn) {
       const sg = ctx.createRadialGradient(w / 2, h * 0.45, 10, w / 2, h * 0.45, w * 0.4);
       sg.addColorStop(0, `rgba(255,255,255,${this._snareFlash * 0.18})`);
       sg.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1197,12 +1212,14 @@ export class Renderer {
     }
 
     // Motif memory after chaos cool-down (subtle rim stitch)
-    this._drawMotifMemory(ctx, w, h, directive, state);
+    if (!this._artOn) this._drawMotifMemory(ctx, w, h, directive, state);
 
     ctx.restore();
 
     // Bass vignette weight (screen space)
-    if (this._vignette > 0.05) {
+    // art2: this radial (w*0.22→w*0.78, up to 0.8 black) + lighting pulse/bloom radials were the
+    // big pink/grey haze disk + dark oval vignette over art1 plates. Off while a painting owns the frame.
+    if (this._vignette > 0.05 && !this._artOn) {
       const vg = ctx.createRadialGradient(w / 2, h / 2, w * 0.22, w / 2, h / 2, w * 0.78);
       vg.addColorStop(0, 'rgba(0,0,0,0)');
       vg.addColorStop(1, `rgba(0,0,0,${Math.min(0.8, this._vignette)})`);
@@ -1210,9 +1227,7 @@ export class Renderer {
       ctx.fillRect(0, 0, w, h);
     }
 
-    if (this._artOn) { ctx.save(); ctx.globalAlpha = 0.18; }
-    this.lighting.apply(ctx, w, h, light, directive?.palette, this.quality);
-    if (this._artOn) ctx.restore();
+    if (!this._artOn) this.lighting.apply(ctx, w, h, light, directive?.palette, this.quality);
 
     // Typography — scenic; clear sticky on lyricStickExpire / sectionChangeId
     const stickExpire = !!(directive?.lyricStickExpire);
@@ -1267,44 +1282,37 @@ export class Renderer {
    * Default ON; ?debug=0 off; ?debug=1 forces on.
    */
   /**
-   * art1: mood-true painted world. Soft songs never land in storm/warzone; hard songs never in meadows.
-   * Director preset wins when it already matches the mood; otherwise pick from the mood pool,
-   * rotating on section changes (and at least every ~28s) so the video travels.
+   * art3 (QA-20261019-0148): the painting FOLLOWS THE DIRECTOR. If the director preset (or the
+   * live transition target) has a plate, show it immediately (ArtPlates crossfades 1.6s) — no
+   * renderer hold timers, no renderer-side aggression average. Only presets without a plate fall
+   * back to a stable look-alike plate of the same polarity. Hard/soft polarity comes from the
+   * director (hardOnly / hardLock / forbidPastoral / HARD_LOCK preset), never from the renderer.
    */
   _pickArtWorld(preset, directive, audio, t) {
-    const vm = this._vibeMatch || {};
-    let hard = !!(vm.hardLock || vm.hardHoldActive || vm.mode === 'chaos' || vm.forbidPastoral ||
-      directive?.forbidPastoral || directive?.hardOnly || (vm.aggression || 0) >= 0.55 || (vm.stickyAgg || 0) >= 0.55);
     const HARD = ['storm', 'apocalyptic_warzone', 'metal_hall', 'red_void'];
-    const SOFT = ['misty_lake', 'dream_clouds', 'meadow_fauna', 'forest', 'space', 'rainy_city']; // soft → nature / dream first
-    const st = this._artPick || (this._artPick = { id: null, since: t, sec: null, hard, n: 0, acc: { n: 0, e: 0, on: 0, b: 0, tr: 0, agg: 0, fl: 0, ladA: 0 } });
-    const A = st.acc, au = audio || {};
-    const lad = (au.moment?.ladder || au.vibe?.moment?.ladder || '').toString();
-    A.n++; A.e += +au.energy || 0; A.on += +au.onset || 0; A.b += +au.bass || 0; A.tr += +au.treble || 0;
-    A.agg += +(au.vibe?.aggression ?? 0) || 0; A.fl += +(au.flux ?? au.spectralFlux ?? 0) || 0; A.ladA += lad === 'aggressive' ? 1 : 0;
-    // Song-level mood (renderer vibeMatch saturates to 'chaos' on soft songs — QA art1):
-    // long-run mean of analyzer vibe.aggression + share of 'aggressive' ladder frames.
-    if (A.n > 90) {
-      const mAgg = A.agg / A.n, mLad = A.ladA / A.n;
-      const songHard = st.songHard ? (mAgg > 0.5 || mLad > 0.5) : (mAgg > 0.62 || mLad > 0.62);
-      st.songHard = songHard;
-      hard = songHard;
-    } else {
-      hard = (+(au.vibe?.aggression ?? 0) || 0) > 0.7;
+    const SOFT = ['misty_lake', 'dream_clouds', 'meadow_fauna', 'forest', 'space', 'rainy_city', 'dark_sparse', 'cathedral_space'];
+    const HARD_IDS = ['metal_hall', 'reality_fracture', 'apocalyptic_warzone', 'red_void', 'storm'];
+    const FALLBACK = {
+      ocean: ['misty_lake', 'storm'], ancient_ruins: ['cathedral_space', 'apocalyptic_warzone'], empty_highway: ['dark_sparse', 'storm'],
+      reality_fracture: ['dream_clouds', 'red_void'], white_void: ['dream_clouds', 'red_void'], endless_staircase: ['dark_sparse', 'red_void'],
+      candy_happy: ['meadow_fauna', 'red_void'], country_porch: ['meadow_fauna', 'storm'], cozy_autumn: ['forest', 'storm'], snow: ['misty_lake', 'storm'],
+      futuristic_city: ['rainy_city', 'metal_hall'], neon_highway: ['rainy_city', 'metal_hall'], industrial_tunnel: ['dark_sparse', 'metal_hall'],
+      led_wall: ['rainy_city', 'metal_hall'], ambient_field: ['meadow_fauna', 'storm'], orchestral_hall: ['cathedral_space', 'metal_hall'],
+      burning_desert: ['meadow_fauna', 'apocalyptic_warzone'], white: ['dream_clouds', 'red_void']
+    };
+    const id = String(preset || '');
+    const hard = !!(directive?.hardOnly || HARD_IDS.includes(id)); // director polarity only
+    this._artHard = hard;
+    let plate;
+    if (this.art.has(id) || ART_WORLDS[id]) plate = id;
+    else {
+      const fb = FALLBACK[id];
+      plate = fb ? fb[hard ? 1 : 0] : null;
+      if (!plate) { const pool = hard ? HARD : SOFT; let hsh = 0; for (const c of id) hsh = (hsh * 31 + c.charCodeAt(0)) % 997; plate = pool[hsh % pool.length]; }
     }
-    const pool = hard ? HARD : SOFT;
-    const sec = directive?.sectionChangeId ?? directive?.sectionType ?? null;
-    const secChanged = sec != null && sec !== st.sec;
-    const moodFlip = st.hard !== hard;
-    const held = t - st.since;
-    if (!st.id || moodFlip || (secChanged && held > 8) || held > 28) {
-      let next;
-      if (pool.includes(preset) && preset !== st.id && (hard || preset !== 'rainy_city' || st.n > 2)) next = preset;
-      else { st.n++; const cur = pool.indexOf(st.id); next = pool[cur < 0 ? (st.n % pool.length) : (cur + 1 + (st.n % 2)) % pool.length]; if (next === st.id) next = pool[(cur + 1) % pool.length]; }
-      st.id = next; st.since = t; st.hard = hard;
-    }
-    if (sec != null) st.sec = sec;
-    return st.id;
+    // proof hook for QA shoots: HUD preset vs plate on screen
+    try { globalThis.__LS_ART__ = { t, hud: directive?.preset || null, target: id, plate, shown: this.art.cur, mix: this.art.mix, mapped: plate !== id, hard, hardOnly: !!directive?.hardOnly, agg: +(+(audio?.vibe?.aggression ?? 0) || 0).toFixed(2), lad: String(audio?.moment?.ladder || audio?.vibe?.moment?.ladder || audio?.vibe?.ladder || '') }; } catch (_) {}
+    return plate;
   }
 
   _drawDebugHud(ctx, w, h, directive, audio) {
@@ -1591,10 +1599,19 @@ export class Renderer {
       }
     }
     if (this._artOn) {
-      const drawnArt = drawHumanSilhouette(ctx, {
-        x: fx, baseY: h * (0.8 + (idx % 3) * 0.025), heightPx: h * (idx === 0 ? 0.2 : 0.16), t, i: idx, opacity: holdSilent ? 0.4 : 0.96,
-        energy: Number(state?.audio?.energy || 0), hard: this._artPick ? !!this._artPick.hard : !!hardLook,
-        rim: look.palette?.rim, fill: look.palette?.fill, rimSide: (fx < w / 2) ? 1 : -1
+      // art3: music-video performers — role look, eased per-world ground, lead front/centre
+      const n = Math.max(1, Math.min(5, Number(total) || 1));
+      const stage = this._artStage ?? 0.5;
+      const ground = this._artG ?? this.art.ground(this.art.active());
+      const slots = [0, -0.25, 0.25, -0.4, 0.4];
+      const lead = idx === 0;
+      const ax = w * Math.max(0.12, Math.min(0.88, stage + (n > 1 ? slots[idx % 5] : 0))) + (holdSilent ? 0 : Math.sin(t * 0.3 + idx) * 4);
+      const roleSrc = lead ? (roleIdDraw || spec.roleId || look.roleId || castRole || 'vocalish') : (spec.roleId || look.roleId || spec.role || null);
+      const lk = roleLook(roleSrc, idx);
+      const drawnArt = drawPerformer(ctx, {
+        x: ax, baseY: h * (ground - (lead ? 0 : 0.014)), heightPx: h * (lead ? 0.205 : 0.172), t, i: idx,
+        opacity: holdSilent ? 0.45 : 0.97, energy: Number(state?.audio?.energy || 0), hard: !!this._artHard,
+        look: lk, rim: this.art.rim(this.art.active()) || look.palette?.rim, lightSide: this.art.light(this.art.active())
       });
       if (idx === 0) this._figureAnchor = { x: drawnArt.fx, y: (drawnArt.headY + drawnArt.chestY) * 0.5 };
       return;

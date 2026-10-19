@@ -15,19 +15,19 @@
  * lyricStickExpire / sectionChangeId: when section TYPE or chorus.repeat changes,
  * Visual Engine / Lyrics Brain clear sticky last-good phrase (Quality gap 5).
  */
-import { NarrativeState } from './narrativeState.js?v=art1';
+import { NarrativeState } from './narrativeState.js?v=art4';
 import { VariationController } from './variation.js';
 import { ScaleDirector } from './scale.js';
-import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=art1';
-import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=art1';
-import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=art1';
+import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=art4';
+import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=art4';
+import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=art4';
 import {
   dominantVibe, vibePackFamily, vibeLeadPresets, vibeForbiddenPresets, genreLeadPresets,
   genreForbiddenPresets, ladderLeadPresets, resolveLadder, isAggressiveVibe, ladderStepChanged,
   inferSpeechLikeFromRoles, readVibe, readMoment, STICKY_MS, PIN_HOLD_MS, ESCAPE_MS, AGGRESSION_THRESH,
   hardLockPresets, isHardLockPreset, softForbiddenUnderHard, isSoftForbiddenUnderHard
-} from './vibeCast.js?v=art1';
-import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=art1';
+} from './vibeCast.js?v=art4';
+import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=art4';
 
 const SECTION_INTENTS = {
   intro: {
@@ -118,7 +118,7 @@ const STYLE_PRESET_BUNDLES = {
   realistic: ['meadow_fauna', 'country_porch', 'forest', 'cozy_autumn'],
   cinematic: ['rainy_city', 'ancient_ruins', 'ocean', 'empty_highway', 'storm', 'apocalyptic_warzone', 'metal_hall'],
   surreal: ['endless_staircase', 'white_void', 'candy_happy', 'dream_clouds', 'reality_fracture', 'red_void'],
-  dreamlike: ['dream_clouds', 'misty_lake', 'space', 'ocean', 'reality_fracture', 'storm'],
+  dreamlike: ['dream_clouds', 'misty_lake', 'space', 'ocean', 'reality_fracture', 'storm', 'forest', 'meadow_fauna', 'red_void'], // art3: + enchanted forest / meadow (soft), red eclipse void (hard)
   mythological: ['ancient_ruins', 'cathedral_space', 'ocean', 'snow', 'storm', 'apocalyptic_warzone'],
   'sci-fi': ['space', 'futuristic_city', 'neon_highway', 'industrial_tunnel', 'metal_hall', 'reality_fracture'],
   horror: ['dark_sparse', 'endless_staircase', 'red_void', 'apocalyptic_warzone', 'storm'],
@@ -128,6 +128,13 @@ const STYLE_PRESET_BUNDLES = {
 /** realistic has no fracture/void — hard fallback stays grounded (storm first, never fracture/void). */
 const REALISTIC_HARD_FALLBACK = ['storm', 'metal_hall', 'apocalyptic_warzone'];
 const CINEMATIC_HOLD_MS = 30000;
+/** art3: worlds that have a painted plate (assets/worlds/<id>/bg.jpg). Chip rotation prefers these. */
+const ART_PLATE_IDS = ['misty_lake', 'meadow_fauna', 'forest', 'dream_clouds', 'space', 'rainy_city', 'dark_sparse', 'cathedral_space',
+  'storm', 'apocalyptic_warzone', 'metal_hall', 'red_void'];
+/** art3: a chip world holds this long, then the show moves to the next world in the same chip bundle
+ *  (same polarity). Chip taps / soft↔hard flips still jump to the bundle head at once. */
+const STYLE_ROTATE_SOFT_MS = 12000;
+const STYLE_ROTATE_HARD_MS = 10000;
 
 const PRESET_ALIASES = {
   desert: 'burning_desert',
@@ -325,6 +332,8 @@ export class ScenePlanner {
     this._styleHoldUntil = 0;
     this._styleHeldPreset = null;
     this._stylePolarity = null;
+    // art4: new show → fresh song polarity lock + hysteresis
+    this._songPol = null; this._songPolTrack = undefined; this._polTrack = undefined;
 
     // Peaceful/calm or nature language must seed the nature world before roulette.
     const moodKey = String(mood || '').toLowerCase();
@@ -1457,12 +1466,71 @@ export class ScenePlanner {
     }
     const latchLive = !(softClear || softBedGuard) && now < (this._hardLatchUntil || 0);
     // HOLD-0338: softClear OR softBedGuard → hardOnly MUST be false
-    const hardOnly = (softClear || softBedGuard)
+    const hardOnlyRaw = (softClear || softBedGuard)
       ? false
       : (pinLive || aggressiveLive || latchLive || nuclearHard);
+    // art3 (QA-20261019-0148 #4): polarity hysteresis. On Night Owl, softBedGuard gates on the
+    // instantaneous energy (<0.42), so raw hardOnly flickered on single beats (~100-300ms) and every
+    // flicker forced a HARD_LOCK id (hardLockPresets()[0] = metal_hall) → metal_hall/storm flashes
+    // in the pre-chorus. Soft→hard now needs ≥1.2s of sustained raw hard (no instant bypass:
+    // martial/genre flags flicker too); hard→soft needs ≥2s of sustained soft. Track change resets.
+    if (this._polTrack !== this._lastTrackKey) {
+      this._polTrack = this._lastTrackKey;
+      this._polOut = false;
+      this._polRaw = hardOnlyRaw; this._polRawSince = now;
+    }
+    if (hardOnlyRaw !== this._polRaw) { this._polRaw = hardOnlyRaw; this._polRawSince = now; }
+    const polNeed = hardOnlyRaw ? 1200 : 2000; // martial + genre flags both flicker per beat/frame → no instant bypass
+    if (hardOnlyRaw !== this._polOut && now - (this._polRawSince || now) >= polNeed) this._polOut = hardOnlyRaw;
+    // art4 (QA-20261019-0222): song polarity LOCK. Phase 1 (first 25s): the debounced raw signal
+    // decides, gated after 3s by the cumulative song mean (agg / 'aggressive' ladder share > 0.62).
+    // At 25s the song's polarity is LOCKED: Night Owl's analyzer drifts to agg≈0.9–0.99 late, which
+    // used to tip the cumulative mean → lava/storm on a soft song. After the lock:
+    //  - soft song: flips to hard ONLY with very strong sustained evidence — every 1s bucket of the
+    //    last 40s (40 in a row) has raw-hard share ≥0.9 AND mean agg ≥0.88. Night Owl's late drift
+    //    flickers (longest qualifying run 3s), so it never qualifies; a soft-intro-then-heavy song does.
+    //  - hard song: stays hard; unlocks to soft only after 45s of raw-soft buckets (≤5% hard).
+    // Track change / new show resets. HARD_LOCK ids and clamps downstream are unchanged.
+    if (this._songPolTrack !== this._lastTrackKey || !this._songPol) {
+      this._songPolTrack = this._lastTrackKey;
+      this._songPol = { n: 0, agg: 0, lad: 0, since: now, hard: false, locked: null, lateFlip: false, buckets: [], cur: null };
+    }
+    const SP = this._songPol;
+    const aggLive = Math.max(0, Math.min(1, Number(audio?.vibe?.aggression ?? aggN) || 0));
+    const ladAgg = (ladderLive === 'aggressive' || ladderLive === 'chaotic');
+    // 1s evidence buckets (last 45s)
+    if (!SP.cur || now - SP.cur.t0 >= 1000) {
+      if (SP.cur && SP.cur.n) { SP.buckets.push(SP.cur); if (SP.buckets.length > 45) SP.buckets.shift(); }
+      SP.cur = { t0: now, n: 0, raw: 0, agg: 0, harsh: 0, genre: 0 };
+    }
+    const C = SP.cur; C.n++; C.raw += hardOnlyRaw ? 1 : 0; C.agg += aggLive; C.harsh += harshN; C.genre += genreHard ? 1 : 0;
+    const songAge = now - SP.since;
+    if (SP.locked == null) {
+      SP.n++; SP.agg += aggLive; SP.lad += ladAgg ? 1 : 0;
+      const spAgg = SP.agg / SP.n, spLad = SP.lad / SP.n;
+      SP.hard = SP.hard ? (spAgg > 0.5 || spLad > 0.5) : (spAgg > 0.62 || spLad > 0.62);
+      if (songAge >= 25000) SP.locked = SP.hard ? 'hard' : 'soft';
+    }
+    const bk = SP.buckets;
+    // measured (review-art4): Night Owl's longest such run is 3s; a truly heavy section (Clash) holds it for minutes.
+    const strongHard = bk.length >= 40 && bk.slice(-40).every(x => x.raw / x.n >= 0.9 && x.agg / x.n >= 0.88);
+    const strongSoft = bk.length >= 45 && bk.slice(-45).every(x => x.raw / x.n <= 0.05);
+    if (SP.locked === 'soft' && strongHard) { SP.locked = 'hard'; SP.lateFlip = true; }
+    else if (SP.locked === 'hard' && strongSoft) { SP.locked = 'soft'; }
+    let hardOnly;
+    if (SP.locked === 'soft') hardOnly = false;
+    else if (SP.locked === 'hard') hardOnly = true;
+    else hardOnly = !!this._polOut && (songAge < 3000 || SP.hard);
 
     const hardHud = {
       hardOnly: !!hardOnly,
+      hardOnlyRaw: !!hardOnlyRaw,
+      songHard: !!(this._songPol && this._songPol.hard),
+      songAgg: this._songPol ? +(this._songPol.agg / Math.max(1, this._songPol.n)).toFixed(3) : 0,
+      songLock: this._songPol ? this._songPol.locked : null,
+      songLateFlip: !!(this._songPol && this._songPol.lateFlip),
+      harshN: +(+harshN || 0).toFixed(3),
+      genreHard: !!genreHard,
       pinLive: !!pinLive,
       aggressiveLive: !!aggressiveLive,
       latchLive: !!latchLive,
@@ -2361,7 +2429,7 @@ export class ScenePlanner {
     if (!bundle.length) return;
     const flip = this._stylePolarity != null && this._stylePolarity !== polarity;
     this._stylePolarity = polarity;
-    const holdMs = this._styleHoldMs(styles);
+    const holdMs = hardOnly ? STYLE_ROTATE_HARD_MS : STYLE_ROTATE_SOFT_MS; // art3 (was _styleHoldMs: 30s/20s single-world hold)
 
     if (this.plan?.sectionPlans?.length) {
       for (let i = 0; i < this.plan.sectionPlans.length; i++) {
@@ -2395,7 +2463,14 @@ export class ScenePlanner {
       return;
     }
 
-    const next = bundle[0];
+    // art3: rotate through the chip bundle (plated worlds only when any exist) instead of
+    // snapping back to bundle[0] forever. Flip / chip change (held cleared) → bundle head.
+    const plated = bundle.filter(p => ART_PLATE_IDS.includes(p));
+    const rot = plated.length ? plated : bundle;
+    const held = this._styleHeldPreset;
+    const next = (!flip && held && rot.includes(held) && rot.length > 1)
+      ? rot[(rot.indexOf(held) + 1) % rot.length]
+      : rot[0];
     if (next && next !== this.currentPreset) {
       const fromOk = hardOnly
         ? isHardLockPreset(this.currentPreset)

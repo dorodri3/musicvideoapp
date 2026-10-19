@@ -1,4 +1,5 @@
 # art1: offline painted backdrop generator (bg plate + fg layer w/ alpha) per world.
+# art2: writes *_procedural backups only; bg.jpg is now the painted cinematic plate.
 import numpy as np, os, math
 from PIL import Image, ImageFilter
 W,H=720,1280
@@ -74,9 +75,9 @@ def finish(img,name,fg=None,mood_cap=232):
     img+= (R.random((H,W,1))-0.5)*6
     im=Image.fromarray(np.clip(img,0,255).astype(np.uint8)).filter(ImageFilter.ModeFilter(5)).filter(ImageFilter.SMOOTH)
     d=f'{OUT}/{name}'; os.makedirs(d,exist_ok=True)
-    im.save(f'{d}/bg.jpg',quality=78,optimize=True,progressive=True)
-    if fg is not None: fg.save(f'{d}/fg.webp',quality=72,method=6)
-    print(name, os.path.getsize(f'{d}/bg.jpg')//1024,'KB', (os.path.getsize(f'{d}/fg.webp')//1024 if fg is not None else '-'))
+    im.save(f'{d}/bg_procedural.jpg',quality=78,optimize=True,progressive=True)
+    if fg is not None: fg.save(f'{d}/fg_procedural.webp',quality=72,method=6)
+    print(name, os.path.getsize(f'{d}/bg_procedural.jpg')//1024,'KB', (os.path.getsize(f'{d}/fg_procedural.webp')//1024 if fg is not None else '-'))
 def newfg(): return np.zeros((H,W,4),np.uint8)
 def reflect(img,line,dark=0.55,ripple=6):
     L=int(line*H); src=img[:L][::-1]; n=min(H-L,L)
