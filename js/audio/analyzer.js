@@ -2,7 +2,7 @@ import {
   resolveExplicitGenre,
   leanGenreFromAudio,
   HARSH_PROTECTED
-} from './genreFamily.js?v=art8';
+} from './genreFamily.js?v=mood1';
 
 /**
  * Audio analyzer: RMS, peak, centroid, flux, bass/mid/treble,
@@ -59,6 +59,9 @@ export class AudioAnalyzer {
     this._explicitFamily = null; // from ID3/user/fantasy — sticky
     this._explicitSource = 'none';
     this._genreFamily = 'unknown';
+    // mood1: full-song pre-scan prior (songScan.js) + live 'still listening' state
+    this._songScan = null;
+    this._resetListen();
     // Instrument envelope smoothers
     this._inst = {
       kick: 0, bass: 0, snare: 0, hats: 0, pads: 0, lead: 0, harsh: 0
@@ -132,8 +135,39 @@ export class AudioAnalyzer {
       },
       genreHint: 'unknown',
       genreFamily: 'unknown',
-      genreSource: 'none'
+      genreSource: 'none',
+      genreFamilyProvisional: 'unknown',
+      genreConfidence: 0,
+      vibeConfidence: 0,
+      listening: true,
+      liveListening: true,
+      listenProgress: 0,
+      listenReason: null,
+      scanReady: false,
+      scanVibe: null
     };
+  }
+
+  /** mood1: live listening counters (reset per track via resetHardState). */
+  _resetListen() {
+    this._listen = {
+      lastT: null, audibleMs: 0, speechMs: 0, strongMs: 0,
+      done: false, reason: null, doneAt: null
+    };
+  }
+
+  /**
+   * mood1: seed from the full-song pre-scan (js/audio/songScan.js). Pass null to clear.
+   * While the live read is still listening, genre/vibe use the scan prior with the
+   * scan's confidence instead of guessing from a quiet intro.
+   */
+  setSongScan(scan) {
+    this._songScan = scan && scan.ok ? scan : null;
+    return this._songScan;
+  }
+
+  getSongScan() {
+    return this._songScan;
   }
 
   update(now = performance.now()) {
@@ -406,8 +440,11 @@ export class AudioAnalyzer {
       flux, onset, onsetDensity, energy, rms, rmsSteady, silence, build, drop: dropOut, texture
     });
 
-    const genreHint = this._genreHintFrom(texture, vibe);
-    const { family: genreFamily, source: genreSource } = this._resolveGenreFamily(texture, vibe, genreHint);
+    // mood1: spoken gate + listening state BEFORE genre (quiet intros ≠ speech)
+    const L = this._updateListen(now, { vibe, roles, energy, silence, onsetFast, build, drop: dropOut });
+
+    const genreHintLive = this._genreHintFrom(texture, vibe);
+    const { family: genreFamily, source: genreSource } = this._resolveGenreFamily(texture, vibe, genreHintLive);
 
     // Pleasure lean by genreFamily (GENRE-MAP-PLEASURE) — before spoken clamps
     dropOut = this._applyPleasureLean(roles, {
@@ -475,6 +512,19 @@ export class AudioAnalyzer {
     };
     vibe.moment = moment;
 
+    // mood1: honest confidence + reported genre (neutral while listening w/o prior)
+    const rep = this._reportRead(genreFamily, genreSource, genreHintLive, L, vibe);
+    vibe.confidence = rep.vibeConfidence;
+    vibe.listening = rep.listening;
+    vibe.provisional = rep.listening;
+    Object.assign(moment, {
+      genreFamily: rep.genreFamily,
+      genreConfidence: rep.genreConfidence,
+      vibeConfidence: rep.vibeConfidence,
+      listening: rep.listening,
+      listenProgress: L.progress
+    });
+
     this.frame = {
       rms, peak, centroid, flux,
       bass, mid, treble,
@@ -494,9 +544,19 @@ export class AudioAnalyzer {
       orchestralMartial: !!vibe.orchestralMartial,
       softClear: !!vibe.softClear,
       texture,
-      genreHint,
-      genreFamily,
-      genreSource
+      genreHint: rep.genreHint,
+      genreFamily: rep.genreFamily,
+      genreSource: rep.genreSource,
+      genreFamilyProvisional: genreFamily,
+      genreHintProvisional: genreHintLive,
+      genreConfidence: rep.genreConfidence,
+      vibeConfidence: rep.vibeConfidence,
+      listening: rep.listening,
+      liveListening: !L.done,
+      listenProgress: L.progress,
+      listenReason: L.reason,
+      scanReady: !!this._songScan,
+      scanVibe: this._songScan ? this._songScan.vibe : null
     };
     return this.frame;
   }
@@ -662,10 +722,16 @@ export class AudioAnalyzer {
       this._genreFamily = this._explicitFamily;
       return { family: this._explicitFamily, source: this._explicitSource };
     }
-    // Spoken vibe
+    // Spoken vibe (gated: needs sustained speech — see _updateListen)
     if ((vibe.spoken || 0) > 0.48) {
       this._genreFamily = 'spoken';
       return { family: 'spoken', source: 'audio' };
+    }
+    // mood1: full-song pre-scan beats per-frame lean (intro can't mislabel the song)
+    const scan = this._songScan;
+    if (scan && scan.genre && scan.genre !== 'unknown' && (scan.genreConf || 0) >= 0.4) {
+      this._genreFamily = scan.genre;
+      return { family: scan.genre, source: 'scan' };
     }
     // Map genreHint → family
     const hintMap = {
@@ -1102,9 +1168,114 @@ export class AudioAnalyzer {
     this._ladderChangedAt = 0;
     this._hotSince = 0;
     this._pinProof = null;
+    // mood1: new track → listen again; seed ladder from pre-scan prior if present
+    this._resetListen();
+    this._genreHint = 'unknown';
+    const prior = this._songScan && this._songScan.ladder;
+    if (prior && prior !== 'spoken') this._ladderSticky = prior;
     try {
       if (typeof globalThis !== 'undefined') globalThis.__LS_AUDIO_PIN__ = null;
     } catch (_) { /* ignore */ }
+  }
+
+  /**
+   * mood1 listening state. Live read is 'still listening' from track start until
+   * ~18 s of non-silent audio OR first strong section (≥1.5 s sustained energy with
+   * kick/onset/build/drop evidence) OR the aggression pin arms — whichever first.
+   * Also gates spoken: speech-like must accumulate ≥5 s (≥8 s if the pre-scan
+   * says the song isn't spoken) before spoken can win anywhere.
+   */
+  _updateListen(now, c) {
+    const L = this._listen;
+    const dt = L.lastT == null ? 0 : Math.max(0, Math.min(100, now - L.lastT));
+    L.lastT = now;
+    const { vibe, roles } = c;
+    if (!c.silence) L.audibleMs += dt;
+    const rawSpeech = Math.max(vibe.speechLike || 0, vibe.spoken || 0);
+    // Leaky: intermittent speech-ish frames in music decay away; real speech sustains
+    if (!c.silence && rawSpeech > 0.48) L.speechMs = Math.min(20000, L.speechMs + dt);
+    else L.speechMs = Math.max(0, L.speechMs - dt * 0.5);
+    const strongNow = !c.silence && (c.energy || 0) > 0.42 && (
+      (c.onsetFast || 0) > 0.3 || (roles.kick || 0) > 0.35 || (c.build || 0) > 0.55 || (c.drop || 0) > 0.4
+    );
+    L.strongMs = strongNow ? L.strongMs + dt : Math.max(0, L.strongMs - dt * 0.5);
+    const LISTEN_MS = 18000;
+    if (!L.done) {
+      if (L.strongMs >= 1500) { L.done = true; L.reason = 'strong-section'; }
+      else if (L.audibleMs >= LISTEN_MS) { L.done = true; L.reason = 'time'; }
+      // NOTE: pin arming is NOT an end reason — it can arm on frame 1 (rock/noise family)
+      if (L.done) L.doneAt = now;
+    }
+    L.progress = L.done ? 1 : Math.min(1, Math.max(L.audibleMs / LISTEN_MS, L.strongMs / 1500 * 0.5));
+
+    // Spoken gate — cap speech axes until sustained (raw kept for HUD)
+    const scan = this._songScan;
+    const needMs = scan && scan.genre !== 'spoken' ? 8000 : 5000;
+    // Hysteresis: open at needMs sustained, close below half
+    L.speechOk = L.speechOk ? L.speechMs >= needMs * 0.5 : L.speechMs >= needMs;
+    vibe.speechLikeRaw = rawSpeech;
+    if (!L.speechOk && rawSpeech > 0.4) {
+      vibe.speechLike = Math.min(vibe.speechLike || 0, 0.4);
+      vibe.spoken = vibe.speechLike;
+      vibe.intimateSpeech = vibe.speechLike;
+      if (vibe.dominant === 'spoken') {
+        const alt = [['peace', vibe.peace || 0], ['warm', vibe.warm || 0], ['tense', vibe.tense || 0],
+          ['scary', vibe.scary || 0], ['chaos', Math.max(vibe.chaos || 0, (vibe.aggression || 0) * 0.95)]];
+        alt.sort((a, b) => b[1] - a[1]);
+        vibe.dominant = alt[0][0];
+      }
+    }
+    return L;
+  }
+
+  /** Scan ladder prior while live read is still listening (else null). */
+  _listenPriorLadder() {
+    const scan = this._songScan;
+    if (!scan || !this._listen || this._listen.done) return null;
+    return scan.ladder && scan.ladder !== 'spoken' ? scan.ladder : null;
+  }
+
+  /** mood1: reported genre/confidence. Internal family keeps driving roles/pin. */
+  _reportRead(family, source, hint, L, vibe) {
+    const scan = this._songScan;
+    const liveConf = 0.15 + 0.85 * (L.progress || 0);
+    const explicitConf = this._explicitFamily ? (this._explicitSource === 'id3' ? 0.9 : 0.75) : 0;
+    const scanGenreConf = scan ? (scan.genreConf || 0) : 0;
+    const scanVibeConf = scan ? (scan.vibeConf || 0) : 0;
+    const liveListening = !L.done;
+    const listening = liveListening && !scan;
+    let genreFamily = family;
+    let genreSource = source;
+    let genreHint = hint;
+    if (listening && !this._explicitFamily) {
+      genreFamily = 'unknown';
+      genreSource = 'listening';
+      genreHint = 'unknown';
+    } else if (listening) {
+      genreHint = 'unknown'; // explicit tag known, texture hint not yet trustworthy
+    } else if (scan && liveListening) {
+      // Scan-derived hint until live texture has listened long enough
+      const g = scan.genre;
+      genreHint = (g === 'rock' || g === 'noise') ? 'metal'
+        : g === 'electronic' ? (scan.vibe === 'peaceful' ? 'ambient' : 'edm')
+          : (g === 'classical' || g === 'soundtrack') ? 'classical'
+            : (g === 'hiphop' || g === 'jazz' || g === 'folk' || g === 'spoken') ? g
+              : 'edm'; // pop/kpop/latin/afro/rnb/indie/gospel → groove-led hint
+      if (g === 'rnb' || g === 'gospel') genreHint = 'ambient';
+      if (g === 'indie') genreHint = 'folk';
+    }
+    // Scan prior lifts early dominant to the song's character (never during softClear/pin logic)
+    if (scan && liveListening && !vibe.aggressionLock) {
+      const domPrior = { aggressive: 'chaos', warm: 'warm', tense: 'tense', peaceful: 'peace' }[scan.ladder];
+      const rank = { spoken: 0, peace: 1, warm: 2, tense: 3, scary: 3, chaos: 4 };
+      if (domPrior && (rank[vibe.dominant] ?? 1) < rank[domPrior] && !vibe.softClear) vibe.dominant = domPrior;
+    }
+    const r3 = (v) => Math.round(Math.max(0, Math.min(1, v)) * 1000) / 1000;
+    return {
+      genreFamily, genreSource, genreHint, listening,
+      genreConfidence: r3(Math.max(liveConf * (family === 'unknown' ? 0.5 : 1), explicitConf, scanGenreConf)),
+      vibeConfidence: r3(Math.max(liveConf, scanVibeConf))
+    };
   }
 
   _smoothLadder(instant, vibe, now) {
@@ -1114,6 +1285,11 @@ export class AudioAnalyzer {
       this._ladderCandidate = null;
       return 'aggressive';
     }
+
+    // mood1: while the live read is still listening, the pre-scan ladder is a floor
+    // (quiet intro can't demote NIN/Cullah to peaceful/spoken). Escalation still free.
+    const prior = this._listenPriorLadder();
+    if (prior && this._ladderRank(instant) < this._ladderRank(prior)) instant = prior;
 
     const sticky = this._ladderSticky || 'peaceful';
     const scores = this._ladderScores(vibe);
