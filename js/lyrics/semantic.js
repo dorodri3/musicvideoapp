@@ -567,6 +567,7 @@ const STYLE_MODIFIERS = {
   mythological: { abstract: 0.3, mythic: 0.85 },
   'sci-fi': { abstract: 0.35, mythic: 0.1 },
   horror: { abstract: 0.4, mythic: 0.2 },
+  sad: { abstract: 0.15, mythic: 0.05 }, // Nov24 Sad look: literal, grounded (rain, bench, warm window)
   abstract: { abstract: 0.95, mythic: 0.1 },
   epic: { abstract: 0.25, mythic: 0.5 }
 };

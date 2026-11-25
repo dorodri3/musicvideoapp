@@ -73,15 +73,15 @@ function walkPose(t, ph, f, e) {
   return { ph, sw: sw * 0.4, hipX, hipY, shC, shL, shR, head, hipL, hipR, kneeL, kneeR, ankL, ankR, elL, elR, haL, haR, prop: null, shW: 2.6, lean, walk: true, facing: f };
 }
 
-function pose(look, t, k, e, hv, side, beatPh = null, move = null, facing = 1) {
+function pose(look, t, k, e, hv, side, beatPh = null, move = null, facing = 1, rx = null) {
   const w = lerp(1.2, 2.5, hv);
   const ph = beatPh != null ? beatPh : t * w + k * 1.7;
   if (move === 'walk') return walkPose(t, ph, facing >= 0 ? 1 : -1, e);
-  const amp = lerp(0.35 + 0.3 * e, 0.65 + 0.35 * e, hv);
+  const amp = lerp(0.35 + 0.3 * e, 0.65 + 0.35 * e, hv) * (rx && Number.isFinite(rx.swayMul) ? rx.swayMul : 1);
   const sw = Math.sin(ph) * amp;
   const bob = (0.5 - 0.5 * Math.cos(2 * ph)) * lerp(0.8, 1.15, hv) * amp;
   const hipX = sw * 2.2;
-  const hipY = 50 - bob;
+  let hipY = 50 - bob;
   const lean = -sw * 1.3;
   const tilt = sw * 1.4;
   const dancer = look === 'dancer';
@@ -136,6 +136,7 @@ function pose(look, t, k, e, hv, side, beatPh = null, move = null, facing = 1) {
   const beat = Math.max(0, Math.cos(ph * 2)); // 1 on each beat-ish, 0 between
   const bob2 = (0.5 - 0.5 * Math.cos(ph * 2));
   const moveTorso = (dx, dy, dh) => { for (const q of [shC, shL, shR]) { q[0] += dx; q[1] += dy; } head[0] += dx + (dh || 0); head[1] += dy - Math.abs(dh || 0) * 0.4; };
+  const crouch = (dy) => { hipY -= dy; hipL[1] -= dy; hipR[1] -= dy; for (const q of [shC, shL, shR, head]) q[1] -= dy; };
   switch (move) {
     case 'reach': { // free hand stretches out toward the camera side, slow
       const fs = look === 'vocalist' && prop ? (prop.at === 'R' ? 'L' : 'R') : 'L';
@@ -158,9 +159,41 @@ function pose(look, t, k, e, hv, side, beatPh = null, move = null, facing = 1) {
     case 'idle': break; // standing, looking into the world
     case 'gaze': tR = [head[0] + 4, head[1] + 1]; break; // shading the eyes, looking out over the vista
     case 'open': tL = [shC[0] - 22, 70 + 3 * Math.sin(ph * 0.5)]; tR = [shC[0] + 22, 70 + 3 * Math.sin(ph * 0.5 + 1)]; break; // arms opening to the sky
+    // ---- style1 reactive vocabulary (stand-and-react; no traversal) ----
+    case 'stand': tL = [shC[0] - 12.2, 51]; tR = [shC[0] + 12.2, 51]; break; // polish6: arms hang relaxed (never hands-on-hips)
+    // polish6 cozy: both hands cup a mug at the chest; every ~9s a slow sip lifts it toward the mouth
+    case 'mug': case 'mug_look': {
+      const sipK = Math.max(0, Math.sin((t * 0.7 + k) % (Math.PI * 2) * 0.5) ** 24); // brief, rare
+      const my = 63 + 18 * sipK, mx = shC[0] + side * (1.5 - 1.2 * sipK);
+      tL = [mx - 3.4, my - 0.5]; tR = [mx + 3.4, my - 0.5]; if (sipK > 0.2) { head[1] -= 0.8 * sipK; }
+      break; }
+    // polish6 heavy: roar / brace up at the beast — wide stance, knees bent, chest & head tilted up, arms out with clenched fists
+    case 'roar': crouch(3.6 - 0.8 * beat); ankL[0] -= 4.8; ankR[0] += 4.8; tL = [shC[0] - 22, 92 + 3 * beat]; tR = [shC[0] + 22, 92 + 3 * beat]; head[1] += 2.2; break;
+    case 'brace_up': crouch(5.2); ankL[0] -= 5.4; ankR[0] += 5.4; tL = [shC[0] - 20, 87 + 2 * beat]; tR = [shC[0] + 20, 87 + 2 * beat]; head[1] += 1.8; break;
+    case 'pockets': tL = [hipL[0] - 3.2, hipY + 4]; tR = [hipR[0] + 3.2, hipY + 4]; break; // hands in coat pockets
+    case 'look_up_soft': tL = [hipL[0] - 3.2, hipY + 4]; tR = [hipR[0] + 3.2, hipY + 4]; break; // head lifts (see gaze), hands stay
+    case 'lantern': tL = [shC[0] - 12, 55]; tR = [shC[0] + 14 * side, 62]; break; // lantern held low in front, light side
+    case 'turn_lantern': moveTorso(side * 1.2, 0, side * 1.4); tL = [shC[0] - 12, 56]; tR = [shC[0] + 18 * side, 70]; break;
+    case 'lift_lantern': tL = [shC[0] - 11, 58]; tR = [shC[0] + 16 * side, 92]; break; // lifts the lantern toward the sound
+    case 'freeze': moveTorso(0, -1.6, 0); tL = [shC[0] - 7, 66]; tR = [shC[0] + 9 * side, 64]; ankL[0] -= 1.2; ankR[0] += 1.2; break;
+    case 'step_back': moveTorso(-side * 2.6, -0.6, -side * 1.6); ankL[0] -= side * 3.5; tL = [shC[0] - 15, 64]; tR = [shC[0] + 15, 66]; break;
+    case 'brace': moveTorso(0, -2.4, 0); ankL[0] -= 2.5; ankR[0] += 2.5; tL = [shC[0] - 10, 74]; tR = [shC[0] + 10, 76]; break; // guard up, knees soft
+    case 'turn': moveTorso(side * 1.6, 0, side * 1.8); tL = [shC[0] - 12, 56]; tR = [shC[0] + 12, 56]; break;
+    case 'look_up': tL = [shC[0] - 12, 55]; tR = [shC[0] + 12, 55]; break;
+    case 'reach_light': tL = [shC[0] - 12, 56]; tR = [shC[0] + 14 * side, 108]; break; // one arm into the light
+    case 'raise_fists': crouch(2.4); tL = [shC[0] - 19, 104 + 2 * beat]; tR = [shC[0] + 19, 104 + 2 * beat]; ankL[0] -= 4.2; ankR[0] += 4.2; head[1] += 2.0; break; // polish6: wide stance, knees bent, fists apart in a V roaring up
+    case 'defiant': ankL[0] -= 2.8; ankR[0] += 2.8; tL = [shC[0] - 15, 56]; tR = [shC[0] + 15, 56]; moveTorso(0, -2.4 * beat * (hv > 0.3 ? 1 : 0.4), 1.4 * beat); break; // wide stance, headbang on kick
+    case 'bounce': moveTorso(0, -2.2 * bob2, 0); tL = [shC[0] - 16, 70 + 8 * beat]; tR = [shC[0] + 16, 70 + 8 * beat]; break;
+    case 'point_up': tR = [shC[0] + 8, 110]; tL = [shC[0] - 14, 64 + 4 * bob2]; break;
     default: break; // sway / strum / flow / pump = base pose
   }
-  if (move === 'step' || move === 'hips') {
+  // style1: gaze (head turns/lifts toward the target) + hunch (head low)
+  if (rx) {
+    const gx = Math.max(-1, Math.min(1, Number(rx.gx) || 0)), gy = Math.max(-1, Math.min(1, Number(rx.gy) || 0)), hu = Math.max(0, Math.min(1, Number(rx.hunch) || 0));
+    head[0] += gx * 2.4; head[1] += gy * 1.6 - hu * 2.2 * (1 - Math.max(0, gy));
+    shC[0] += gx * 0.6; shL[1] -= hu * 0.8; shR[1] -= hu * 0.8;
+  }
+  if (move === 'step' || move === 'hips' || move === 'freeze' || move === 'step_back' || move === 'brace' || move === 'raise_fists' || move === 'defiant' || move === 'roar' || move === 'brace_up') {
     [kneeL] = ik(hipL, ankL, 24.5, 23, -1); [kneeR] = ik(hipR, ankR, 24.5, 23, 1);
     kneeL = kx(kneeL, hipL, ankL); kneeR = kx(kneeR, hipR, ankR);
   }
@@ -177,10 +210,10 @@ export function drawPerformer(ctx, o) {
   st.e += (Math.min(1, o.energy || 0) - st.e) * Math.min(1, dt * 2.5);
   st.hv += ((o.hard ? 1 : 0) - st.hv) * Math.min(1, dt * 1.2);
   const side = o.lightSide || 1;
-  let P = pose(look, t, k, st.e, st.hv, side, o.beatPh ?? null, o.move || null, o.facing ?? 1);
+  let P = pose(look, t, k, st.e, st.hv, side, o.beatPh ?? null, o.move || null, o.facing ?? 1, o.react || null);
   if (o.moveFrom && o.moveFrom !== o.move && (o.moveMix ?? 1) < 1) {
     // ease between two moves (smoothstep), joint by joint
-    const P0 = pose(look, t, k, st.e, st.hv, side, o.beatPh ?? null, o.moveFrom, o.facing ?? 1);
+    const P0 = pose(look, t, k, st.e, st.hv, side, o.beatPh ?? null, o.moveFrom, o.facing ?? 1, o.react || null);
     const m = o.moveMix, sm = m * m * (3 - 2 * m);
     const mixV = (a, b) => (Array.isArray(a) && Array.isArray(b)) ? a.map((v, j) => (typeof v === 'number' && typeof b[j] === 'number') ? lerp(v, b[j], sm) : b[j]) : b;
     for (const key of Object.keys(P)) {
@@ -235,7 +268,8 @@ export function drawPerformer(ctx, o) {
   // outfit silhouettes
   if (look === 'vocalist' || look === 'wanderer') { // long coat to the knee, hem swings behind the motion
     // two open-front panels: legs stay readable between them, hems lag the motion
-    const hem = 31, fl = 11.5 + 1.2 * Math.abs(sw), lag = -sw * 2.6;
+    const wind = Number(o.react?.wind) || 0, cloak = o.react?.coat === 'cloak', torn = o.react?.coat === 'torn';
+    const hem = cloak ? 18 : torn ? 26 : 31, fl = (cloak ? 15 : 11.5) + 1.2 * Math.abs(sw) + wind * 3, lag = -sw * 2.6 + wind * (cloak ? 7 : 3) * Math.sin(t * 1.7 + k);
     poly([[shL[0] - 1.5, shL[1] - 1], [hipX - hipW - 1.8, hipY], [hipX - fl + lag, hem], [hipX - 3.2 + lag, hem + 1.5], [hipX - 0.6, hipY + 5], [shC[0] - 2, shC[1] - 4]], false);
     poly([[shR[0] + 1.5, shR[1] - 1], [hipX + hipW + 1.8, hipY], [hipX + fl + lag, hem], [hipX + 3.2 + lag, hem + 1.5], [hipX + 0.6, hipY + 5], [shC[0] + 2, shC[1] - 4]], false);
     poly([[shC[0] - 3.5, shC[1] + 1], [shC[0] - 5.5, shC[1] + 6], [shC[0] - 1.5, shC[1] + 3]], false); // collar
@@ -257,12 +291,23 @@ export function drawPerformer(ctx, o) {
     caps(sh, el, uaR, faR + 0.35); caps(el, ha, faR + 0.35, faR * 0.8);
     circ([lerp(el[0], ha[0], 0.28), lerp(el[1], ha[1], 0.28)], faR + 0.45); // forearm muscle
     const dx = ha[0] - el[0], dy = ha[1] - el[1], d = Math.hypot(dx, dy) || 1;
-    const tip = [ha[0] + dx / d * 4.6, ha[1] + dy / d * 4.6];
-    caps(ha, tip, 1.9, 1.6); // palm + fingers
-    circ([ha[0] + (-dy / d) * 1.7 + dx / d * 1.2, ha[1] + (dx / d) * 1.7 + dy / d * 1.2], 0.95); // thumb
+    if (o.move === 'roar' || o.move === 'brace_up' || o.move === 'raise_fists') { circ(ha, 2.7); } else {
+      const tip = [ha[0] + dx / d * 4.6, ha[1] + dy / d * 4.6];
+      caps(ha, tip, 1.9, 1.6); // palm + fingers
+      circ([ha[0] + (-dy / d) * 1.7 + dx / d * 1.2, ha[1] + (dx / d) * 1.7 + dy / d * 1.2], 0.95); // thumb
+    }
     if (look === 'rhythm') caps([el[0] + dx * 0.78, el[1] + dy * 0.78], ha, 2.9, 2.7); // cuffs
   };
   arm(shL, elL, haL); arm(shR, elR, haR);
+  // polish6 cozy: knit blanket draped over the shoulders, falling past the hips (hands + mug come out in front)
+  const blanket = !!o.react?.blanket;
+  // two draped panels wrapped round the shoulders and forearms; open at the front so the sweater, hands and mug show
+  const wv = (i) => 1.1 * Math.sin(t * 0.8 + k + i);
+  const panelL = blanket ? [[shC[0] - 2.5, shC[1] + 3.4], [shL[0] - 2.5, shL[1] + 3.2], [shL[0] - 6.8, shL[1] - 4], [shL[0] - 8.2, shL[1] - 16], [hipX - 15 - sw * 1.2, 40 + wv(0)], [hipX - 13.5 - sw * 1.2, 31 + wv(1)], [hipX - 6, 33.5 + wv(2)], [hipX - 3.2, 36], [shC[0] - 5.2, shC[1] - 15.5], [shC[0] - 3.4, shC[1] - 4]] : null;
+  const panelR = blanket ? [[shC[0] + 2.5, shC[1] + 3.4], [shR[0] + 2.5, shR[1] + 3.2], [shR[0] + 6.8, shR[1] - 4], [shR[0] + 8.2, shR[1] - 16], [hipX + 15 - sw * 1.2, 36 + wv(3)], [hipX + 14 - sw * 1.2, 26.5 + wv(4)], [hipX + 6, 29 + wv(5)], [hipX + 3.2, 32], [shC[0] + 5.2, shC[1] - 15.5], [shC[0] + 3.4, shC[1] - 4]] : null;
+  if (blanket) { poly(panelL, true); poly(panelR, true); }
+  const mug = o.react?.mug ? [(haL[0] + haR[0]) / 2, (haL[1] + haR[1]) / 2 + 1.2] : null;
+  if (mug) { const mq = L(mug); g.beginPath(); g.rect(mq[0] - 3.4 * u, mq[1] - 4 * u, 6.8 * u, 8 * u); g.fill(); }
   // neck + head (egg: wider crown, narrow jaw)
   caps([shC[0], shC[1] + 1], [head[0], head[1] - 5], 2.5, 2.2);
   const hq = L(head);
@@ -273,7 +318,11 @@ export function drawPerformer(ctx, o) {
   g.fill();
   // hair / headwear
   const hs = -sw * 1.6;
-  if (look === 'wanderer') {
+  if (look === 'wanderer' && o.react?.hood) {
+    // style1: hood up (horror searcher / sad figure) — rounded hood falling onto the shoulders
+    poly([[head[0] - 6.6, head[1] - 2], [head[0] - 7.4, head[1] + 3.5], [head[0] - 4, head[1] + 9.2], [head[0] + 0.4, head[1] + 10],
+      [head[0] + 4.6, head[1] + 9], [head[0] + 7.4, head[1] + 3.5], [head[0] + 6.6, head[1] - 2], [shC[0] + 7, shC[1] - 1], [shC[0] - 7, shC[1] - 1]], true);
+  } else if (look === 'wanderer') {
     // seen from behind: hair covers the whole back of the head and falls to the nape
     poly([[head[0] - 5.8, head[1] - 4.5], [head[0] - 6.2, head[1] + 2.5], [head[0] - 3.6, head[1] + 7.4], [head[0] + 0.4, head[1] + 8.1],
       [head[0] + 4.4, head[1] + 7.2], [head[0] + 6.2, head[1] + 2.5], [head[0] + 5.8 + hs * 0.5, head[1] - 4.8], [head[0] + 2.5 + hs * 0.8, head[1] - 7.6], [head[0] - 2.5 + hs * 0.8, head[1] - 7.6]], true);
@@ -317,13 +366,14 @@ export function drawPerformer(ctx, o) {
     circ(top, 1.9);
   }
 
+  if (o.react?.prop === 'staff') { const ha = side > 0 ? haR : haL; caps([ha[0] + side * 1.5, ha[1] + 12], [ha[0] - side * 3, 1.5], 0.8, 0.7); }
   // ---------- rim (world palette) ----------
   const rimCol = o.rim || 'rgba(255,200,150,0.95)';
   const r = st.r.getContext('2d'); r.setTransform(1, 0, 0, 1, 0, 0); r.globalCompositeOperation = 'source-over'; r.clearRect(0, 0, cw, ch);
   r.drawImage(st.m, 0, 0); r.globalCompositeOperation = 'source-in'; r.fillStyle = rgba(rimCol, 1); r.fillRect(0, 0, cw, ch);
   // ---------- body: dark base + interior shading + outfit detail ----------
   const b = st.b.getContext('2d'); b.setTransform(1, 0, 0, 1, 0, 0); b.globalCompositeOperation = 'source-over'; b.globalAlpha = 1; b.clearRect(0, 0, cw, ch);
-  b.drawImage(st.m, 0, 0); b.globalCompositeOperation = 'source-in'; b.fillStyle = '#0d0b12'; b.fillRect(0, 0, cw, ch);
+  b.drawImage(st.m, 0, 0); b.globalCompositeOperation = 'source-in'; b.fillStyle = o.react?.body || '#0d0b12'; b.fillRect(0, 0, cw, ch);
   b.globalCompositeOperation = 'source-atop';
   const cx0 = BW / 2 * u * S;
   const gx = b.createLinearGradient(cx0 + side * 16 * u * S, 0, cx0 - side * 6 * u * S, 0);
@@ -342,6 +392,25 @@ export function drawPerformer(ctx, o) {
   else if (look === 'bassist') { line([[head[0] - 1, head[1] - 7.5], [head[0] - 1.4, head[1] - 12]], det, 0.35); line([[head[0] + 1, head[1] - 7.5], [head[0] + 1.4, head[1] - 12]], det, 0.35); line([[hipX - 6, hipY + 6], [hipX + 6, hipY + 6]], soft, 0.5); }
   else if (dancer) { line([[wX - waistW, wY], [wX + waistW, wY]], det, 0.55); line([[hipX - 4, hipY], [hipX - 8 - sw * 3, 31]], soft, 0.4); line([[hipX + 4, hipY], [hipX + 8 - sw * 3, 31]], soft, 0.4); }
   else { line([[hipX - 11, hipY + 2], [hipX + 11, hipY + 2]], det, 0.7); line([[shC[0], shC[1]], [hipX, hipY + 2]], soft, 0.45); }
+  if (blanket) { // oatmeal wool, lit warm from the lamp side, two muted rust stripes near the hem, soft folds, fringe
+    for (const [pi, pts] of [[0, panelL], [1, panelR]]) {
+      const bp = pts.map(L); b.save(); b.beginPath(); b.moveTo(bp[0][0], bp[0][1]); for (let i = 1; i < bp.length; i++) { const m = [(bp[i - 1][0] + bp[i][0]) / 2, (bp[i - 1][1] + bp[i][1]) / 2]; b.quadraticCurveTo(bp[i - 1][0], bp[i - 1][1], m[0], m[1]); } b.closePath(); b.clip();
+      const lit = (pi === 0 ? -1 : 1) === side;
+      const wg = b.createLinearGradient(side * 20 * u, 0, -side * 20 * u, 0); wg.addColorStop(0, 'rgb(196,166,128)'); wg.addColorStop(0.5, 'rgb(132,108,84)'); wg.addColorStop(1, 'rgb(62,48,38)');
+      b.fillStyle = wg; b.fillRect(-40 * u, -110 * u, 80 * u, 110 * u);
+      b.globalAlpha = 0.7; b.fillStyle = 'rgb(140,70,48)';
+      for (const yy of [38.5, 42.5]) { b.save(); b.translate(0, -yy * u); b.rotate((pi ? -1 : 1) * 0.04); b.fillRect(-40 * u, -0.9 * u, 80 * u, 1.5 * u); b.restore(); }
+      b.globalAlpha = 0.28; b.strokeStyle = 'rgb(30,20,14)'; b.lineWidth = 1.1 * u; const dx = pi ? 1 : -1;
+      for (let f = 0; f < 3; f++) { const x0 = shC[0] + dx * (7 + f * 3.4), x1 = hipX + dx * (6 + f * 3.6) - sw; const q0 = L([x0, shC[1] - 6]), qm = L([x0 + dx * 2.5, 58]), q1 = L([x1, 35]); b.beginPath(); b.moveTo(q0[0], q0[1]); b.quadraticCurveTo(qm[0], qm[1], q1[0], q1[1]); b.stroke(); }
+      if (lit) { b.globalAlpha = 0.22; b.fillStyle = 'rgb(255,200,140)'; const q = L([shC[0] + side * 14, 74]); b.beginPath(); b.ellipse(q[0], q[1], 6 * u, 16 * u, 0, 0, TAU); b.fill(); }
+      b.restore(); b.globalAlpha = 1;
+    }
+    const fr = (x0, x1, y0, y1) => { for (let fi = 0; fi <= 6; fi++) { const xx = x0 + (x1 - x0) * fi / 6, yy = y0 + (y1 - y0) * fi / 6; line([[xx, yy], [xx - sw * 0.2, yy - 2.2]], 'rgba(150,120,92,0.9)', 0.45); } };
+    fr(hipX - 13.5 - sw * 1.2, hipX - 3.4, 31 + wv(1), 35.6); fr(hipX + 3.4, hipX + 14 - sw * 1.2, 31.6, 26.5 + wv(4));
+  }
+  if (mug) { const mq = L(mug); const mg2 = b.createLinearGradient(mq[0] + side * 3 * u, 0, mq[0] - side * 3 * u, 0); mg2.addColorStop(0, 'rgb(240,222,196)'); mg2.addColorStop(1, 'rgb(150,128,108)'); b.fillStyle = mg2; b.fillRect(mq[0] - 3 * u, mq[1] - 3.6 * u, 6 * u, 7.2 * u); b.fillStyle = 'rgba(90,50,30,0.6)'; b.fillRect(mq[0] - 3 * u, mq[1] - 3.6 * u, 6 * u, 0.9 * u);
+    b.strokeStyle = 'rgb(226,206,180)'; b.lineWidth = 0.9 * u; b.beginPath(); b.arc(mq[0] + side * 3.6 * u, mq[1], 1.8 * u, -Math.PI / 2, Math.PI / 2, side < 0); b.stroke();
+    for (const hp of [haL, haR]) { const hq = L(hp); b.fillStyle = 'rgba(180,120,90,0.9)'; b.beginPath(); b.arc(hq[0], hq[1], 1.5 * u, 0, TAU); b.fill(); } } // hands wrapped round it
   if (pr && (pr.kind === 'guitar' || pr.kind === 'bass')) {
     const { G, N } = pr; const q = L(G);
     b.strokeStyle = rgba(rimCol, 0.4); b.lineWidth = 0.5 * u; b.beginPath(); b.arc(q[0], q[1], 2.2 * u, 0, TAU); b.stroke();
@@ -359,18 +428,37 @@ export function drawPerformer(ctx, o) {
   // contact shadow
   ctx.globalAlpha = 0.5 * op; ctx.fillStyle = 'rgba(0,0,0,0.85)';
   ctx.beginPath(); ctx.ellipse(x + P.hipX * u * 0.5, by + 0.8 * u, 15 * u, 2.4 * u, 0, 0, TAU); ctx.fill();
-  // faint back-rim on the shadow side
-  ctx.globalAlpha = 0.28 * op;
-  ctx.drawImage(st.r, ox - side * 0.8 * u, oy - 0.3 * u, dw, dh);
-  // main rim on the light side (blurred halo edge)
-  const glow = Math.max(0, Math.min(1, o.glow || 0)); // art6: vocals → the dreamer's glow
-  ctx.globalAlpha = Math.min(1, 0.8 + 0.3 * glow) * op;
-  ctx.shadowColor = rgba(rimCol, 0.85); ctx.shadowBlur = 3.2 * u * (1 + 1.8 * glow);
-  ctx.drawImage(st.r, ox + side * 1.25 * u, oy - 0.5 * u, dw, dh);
-  ctx.shadowBlur = 0; ctx.shadowColor = 'rgba(0,0,0,0)';
+  // faint back-rim on the shadow side (stronger warm fire rim in Heavy so the frontman pops off the black beast)
+  const glow = Math.max(0, Math.min(1, o.glow || 0));
+  ctx.globalAlpha = (o.hard ? 0.65 : 0.28) * op;
+  ctx.drawImage(st.r, ox - side * (o.hard ? 1.25 : 0.8) * u, oy - (o.hard ? 0.6 : 0.3) * u, dw, dh);
+  if (o.hard) { ctx.globalAlpha = 0.55 * op; ctx.drawImage(st.r, ox, oy - 1.1 * u, dw, dh); }
+  // main rim on the light side (layered halo stamps — zero shadowBlur)
+  const rimA = Math.min(1, (o.hard ? 0.95 : 0.8) + 0.3 * glow) * op;
+  ctx.globalAlpha = rimA * 0.32 * (0.6 + 0.6 * glow);
+  ctx.drawImage(st.r, ox + side * (o.hard ? 2.2 : 1.85) * u, oy - 0.9 * u, dw, dh);
+  ctx.globalAlpha = rimA;
+  ctx.drawImage(st.r, ox + side * (o.hard ? 1.45 : 1.25) * u, oy - 0.5 * u, dw, dh);
   ctx.globalAlpha = op;
   ctx.drawImage(st.b, ox, oy, dw, dh);
   ctx.restore();
   const Y = (p) => by - p[1] * u;
-  return { chestY: Y(shC) + 8 * u, headY: Y(head), fx: x + head[0] * u, baseY: by, scale: H / 48, handY: Y(haR), bodyH: H, dance: 'sway', vocalist: look === 'vocalist', look };
+  const X = (p) => x + p[0] * u;
+  if (mug) { // steam: three thin wisps curling up and thinning out (slow, never a cartoon puff)
+    const mx = X(mug), my = Y([0, mug[1] + 3.6]);
+    ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.lineCap = 'round';
+    for (let i = 0; i < 3; i++) {
+      const ph2 = t * 0.9 + i * 2.1, len = (11 + 3 * i) * u, x0 = mx + (i - 1) * 1.3 * u;
+      for (let sgm = 0; sgm < 6; sgm++) {
+        const a0 = sgm / 6, a1 = (sgm + 1) / 6;
+        const px0 = x0 + Math.sin(ph2 + a0 * 4.2) * 1.8 * u * (0.3 + a0), py0 = my - a0 * len;
+        const px1 = x0 + Math.sin(ph2 + a1 * 4.2) * 1.8 * u * (0.3 + a1), py1 = my - a1 * len;
+        ctx.globalAlpha = op * 0.32 * (1 - a0) * (0.6 + 0.4 * Math.sin(t * 0.7 + i)); ctx.strokeStyle = 'rgb(255,236,214)'; ctx.lineWidth = Math.max(0.6, (0.9 + a0 * 1.4) * u);
+        ctx.beginPath(); ctx.moveTo(px0, py0); ctx.lineTo(px1, py1); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  return { chestY: Y(shC) + 8 * u, headY: Y(head), fx: x + head[0] * u, baseY: by, scale: H / 48, handY: Y(haR), bodyH: H, dance: 'sway', vocalist: look === 'vocalist', look,
+    hands: { L: [X(haL), Y(haL)], R: [X(haR), Y(haR)], lantern: [X(haR), Y(haR)] }, head: [X(head), Y(head)], mug: mug ? [X(mug), Y(mug)] : null };
 }

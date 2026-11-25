@@ -149,3 +149,32 @@ Tests (node scripts/harness-idgate.mjs): 13/13 PASS
 - d) rule 5: zero vocal → drop at t≈70s (first line 10s); normal vocal → keep
 - headless Chrome (CDP) load of http://127.0.0.1:8765/: no console errors/exceptions (only apple meta deprecation warning)
 Backups: js/lyrics/parser.js.pre-idgate, js/lyrics/alignment.js.pre-idgate, js/main.js.pre-idgate
+
+2026-11-24 21:43 PT — v2-camera-style-lock-reactions-20261124-214228 — Camera (CEO direction): ONE locked camera style profile per track (js/camera/styleProfile.js: intimate_portrait, ethereal_float, cinematic_dolly, dread_still, kinetic_tight), no mid-song style swaps, no lateral walk tracking or random orbit arcs, slow peak push-ins, and 3-phase reaction beats (js/camera/reactions.js: hold 0.45-0.70s -> push/whip to event/focal -> return to cast crosshair); js/camera/framing.js & js/camera/system.js updated; node --check + camera unit suite + harness-hold-0321-pin PASS; :8765 HTTP 200.
+
+2026-11-24 21:48 PT — v2-camera-follow-stylelock-20261124-214956 — Camera follows Scene Director styleLock/styleLook (not its own pick): happy_pop/candy_pop→kinetic_tight, heavy_evil/ember_wasteland→kinetic_tight_heavy (heavier kick/drop shake + dutch on hits), sad→intimate_portrait, horror→dread_still, cinematic→cinematic_dolly; ethereal_float fallback only. stylePending holds fallback with no switch counted; chip-tap styleLock changes debounce then switch once with 0.75s lens ease. Reactions use gazeU/gazeV and since (skip why==='idle', bounce, headbang); focal {u,v,x,y,why} fallback. node --check + camera suite + harness-hold-0321-pin PASS; :8765 HTTP 200.
+
+2026-11-24 22:10 PT — v2-camera-cozy-lock-intensity-20261124-221005 — Camera: cozy is a locked sixth styleLock ('cozy') mapped to new cozy_dolly (slow intimate dolly, shake 0 / dutch 0 at baseline, soft chorus push). Aliases: golden_pastoral, soul_room, intimate, warm, country, country_road. composition.variant==='cozy' is inert. Reads directive.composition (focalU/V, motionMul, intensity, mode, negativeSpace/emptySpace, horizonTilt/tilt). Intensity chaos (0..1): deadzone <0.32 → drive 0 (near-zero shake/whip/fast push-ins); smoothstep to 1 at 0.85; chaos = drive * profile ceiling (dread_still 0.42 most restrained, cozy_dolly 0.50, intimate_portrait 0.55, ethereal_float 0.58, cinematic_dolly 0.72, kinetic_tight 0.90, kinetic_tight_heavy 1.00). Scales kick/drop shake, whip-pans, hit-dutch, and peak/build push-ins. Whips return to one rest focal (composition focalU/V, reaction gaze, or cast) and never enter empty space. Sad+composition keeps edge framing and empty space, suppresses center-lock and intimate FG zoom, reactions do not recenter, loud sad uses horizonTilt as roll, quiet sad has none; high intensity does not recenter. motionMul scales travel; no composition keeps prior profile grammar. Locked-once-per-track + stylePending hold; mid-song debounce kept as harmless no-flap. Tests: scripts/test-camera-cozy-lock-intensity.mjs 39/39 PASS; node --check; harness-hold-0321-pin PASS; :8765 HTTP 200. js/camera only (composition.js new; system.js, styleProfile.js, framing.js). renderer.js untouched.
+
+2026-11-24 22:10 PT — v2-lyrics-story-read-20261124-221024 — Lyrics Brain: per-song story read (CEO direction, no mood selector)
+Files:
+- js/lyrics/storyRead.js — NEW module exporting buildStoryRead(phrasesOrText, opts), createFallbackStoryRead, STORY_READ_FIELDS, STORY_READ_VERSION.
+  Reuses parser.js (LRCLIB + idgate) and semantic.js (metaphor-aware CONCEPT_GRAPH, worldCue, props, glueScore).
+  Produces plain JSON-serializable read: version, mode ('lyric'|'lowConfidence'|'instrumental'|'none'), logline,
+  setting, narrator, mainCharacter, addressee, situation, emotionalArc, keyMoments (timestamps when synced),
+  motifs, themes, confidence, meta. Includes simile/figurative guards so similes don't assert literal places.
+- js/main.js — minimal // Lyrics Brain storyRead: hooks (import ?v=storyread1, this.storyRead, getStoryRead(),
+  buildStoryRead on _fetchLyrics, _generate, Rule 5 drop, and _resetLyricsForNewSong; passed into director.prePlan
+  and attached to sem.storyRead & _lyricsMeta.storyRead). No global ?v bump. Backup: js/main.js.pre-storyread.
+- scripts/harness-storyread.mjs — NEW Node harness; 6/6 PASS (Josh Go, NIN 1,000,000, Cullah Moonlove Funk,
+  live Night Owl instrumental fallback, live Derek Clegg none fallback, lowConfidence/JSON round-trip).
+- Examples saved: /workspace/light-show-versions/story-read-examples-20261124.json
+Regression: node --check PASS on all edited/new files; node scripts/harness-idgate.mjs 13/13 PASS; :8765 HTTP 200.
+Pre-edit checkpoint: v2-lyrics-pre-story-read-20261124-220438
+
+=== v2-lyrics-quiet-lrc-probe-20261124-222135 ===
+Lyrics Brain: quiet offline .lrc probe (bot 1 ask; Derek Clegg logged 6 browser 404s).
+- js/lyrics/parser.js loadOfflineLrc: reads lyrics/index.json ONCE per dir (cached), fetches only listed files; no blind per-stem GETs, a missing index = silent "no offline files". Dropped stale ?v=art8 from .lrc URLs.
+- NEW lyrics/index.json (["Josh_Woodward_-_Go.lrc"]). Add new offline .lrc filenames here.
+- Backup: js/lyrics/parser.js.pre-quietprobe. No ?v bump; no director/renderer edits.
+Tests: node --check OK; harness-idgate 13/13; harness-storyread 6/6; Derek Clegg miss = 1 request (index.json 200), 0 404s; Josh = index + 1 file, 28 phrases.

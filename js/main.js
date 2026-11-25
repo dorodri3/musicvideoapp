@@ -5,18 +5,20 @@
  * Flow: identify song → fetch lyrics → plan from lyrics → live lyric concepts direct scenery;
  * instruments animate how the world moves.
  */
-import { AudioAnalyzer } from './audio/analyzer.js?v=art8';
-import { VocalEstimate } from './audio/vocalEstimate.js?v=art8';
-import { LyricsParser } from './lyrics/parser.js?v=art8';
-import { SemanticExtractor } from './lyrics/semantic.js?v=art8';
-import { LyricsAlignment } from './lyrics/alignment.js?v=art8';
-import { analyzeLyricMood } from './director/lyricMood.js?v=art8';
-import { StructureAnalyzer } from './structure/analyzer.js?v=art8';
-import { EmotionEngine } from './emotion/engine.js?v=art8';
-import { ScenePlanner } from './director/scenePlan.js?v=art8';
-import { Renderer } from './viz/renderer.js?v=art8';
-import { Controls } from './ui/controls.js?v=art8';
-import { SongIdentity } from './song/identity.js?v=art8';
+import { AudioAnalyzer } from './audio/analyzer.js?v=mood4';
+import { VocalEstimate } from './audio/vocalEstimate.js?v=mood4';
+import { scanSong } from './audio/songScan.js?v=mood4'; // Audio Pulse songScan:
+import { LyricsParser } from './lyrics/parser.js?v=mood4';
+import { SemanticExtractor } from './lyrics/semantic.js?v=mood4';
+import { LyricsAlignment } from './lyrics/alignment.js?v=mood4';
+import { buildStoryRead } from './lyrics/storyRead.js?v=mood4'; // Lyrics Brain storyRead:
+import { analyzeLyricMood } from './director/lyricMood.js?v=mood4';
+import { StructureAnalyzer } from './structure/analyzer.js?v=mood4';
+import { EmotionEngine } from './emotion/engine.js?v=mood4';
+import { ScenePlanner } from './director/scenePlan.js?v=mood4';
+import { Renderer } from './viz/renderer.js?v=mood4';
+import { Controls } from './ui/controls.js?v=mood4';
+import { SongIdentity } from './song/identity.js?v=mood4';
 
 class LightShowApp {
   constructor() {
@@ -44,6 +46,8 @@ class LightShowApp {
     this._clockStart = 0;
     this._lastLyricKey = '';
     this._lyricsResolved = false;
+    this.storyRead = null; // Lyrics Brain storyRead:
+    this.songScan = null; this._scanBlob = null; this._scanKey = null; // Audio Pulse songScan:
     this._fetching = false;
     this._generating = false;
     this._awaitingGesture = false;
@@ -64,19 +68,6 @@ class LightShowApp {
       this._onSource(s);
     });
     this.controls.on('generate', (settings) => this._generate(settings));
-    // HOLD-stylechips: chip clicks update the running plan, not only the Generate snapshot.
-    document.querySelectorAll('[data-style]').forEach((el) => {
-      el.addEventListener('click', () => {
-        // Setup + show-overlay chips share data-style; dedupe so twins don't double-count.
-        const styles = [...new Set(
-          [...document.querySelectorAll('[data-style].active')].map(n => n.dataset.style)
-        )];
-        if (this.settings) this.settings.styles = styles;
-        // art5: tell the director which chip was just switched ON (most recent tap wins)
-        const tapped = el.classList.contains('active') ? el.dataset.style : null;
-        this.director.setStyles(styles, { tapped });
-      });
-    });
     this.controls.on('exit', () => this._exitShow());
     this.controls.on('fullscreen', () => this._toggleFullscreen());
     this.controls.on('gesture', () => this._onUserGesture());
@@ -100,7 +91,6 @@ class LightShowApp {
   }
 
   async _onSource({ type, file, _stableBytes }) {
-    try { this.controls.resetStylesToSetup?.(); } catch (_) { /* soft */ } // art5: new track → setup chips
     // Resolve stable bytes BEFORE any await that yields to the change-handler clear.
     // (_stableBytes was kicked off synchronously in _wire.)
     let stable = null;
@@ -127,6 +117,7 @@ class LightShowApp {
 
     await this._ensureAudio();
     this._disconnectSource();
+    this._scanBlob = (type === 'file' && stable) ? stable.blob : null; this.songScan = null; this._scanKey = null; // Audio Pulse songScan:
     this._resetLyricsForNewSong('new-file'); // art7 P0 (was: only _lyricsResolved = false)
 
     if (type === 'mic') {
@@ -311,6 +302,7 @@ class LightShowApp {
         this._lyricsResolved = true;
         this._songLyricFree = false;
         this._lyricsMeta = { synced: !!result.synced, songKey, lineCount: result.lineCount }; // art7: lyrics-first direction
+        try { this.storyRead = buildStoryRead(result.phrases, { synced: !!result.synced, duration: this.duration || 0, identity: this.identity.get(), gate: this.lyricsParser.lastGate, source: result.source || null }); this._lyricsMeta.storyRead = this.storyRead; globalThis.__LS_STORYREAD__ = this.storyRead; } catch (_) { /* soft */ } // Lyrics Brain storyRead:
         // Prefer LRCLIB meta names when better
         if (result.meta?.artistName) this.identity.artist = result.meta.artistName;
         if (result.meta?.trackName) this.identity.title = result.meta.trackName;
@@ -328,6 +320,7 @@ class LightShowApp {
       const gate = this.lyricsParser.lastGate;
       // art7 P0: instrumental / lyric-free → empty sheet + captions forced off for this song
       if (gate?.lyricFree) { this._songLyricFree = true; this._lyricsMeta = null; try { this.controls.setLyricsText(''); } catch (_) { /* soft */ } }
+      try { this.storyRead = buildStoryRead([], { synced: false, duration: this.duration || 0, identity: this.identity.get(), gate }); this._lyricsMeta = { synced: false, songKey, lineCount: 0, storyRead: this.storyRead }; globalThis.__LS_STORYREAD__ = this.storyRead; } catch (_) { /* soft */ } // Lyrics Brain storyRead:
       if (gate?.lyricFree || gate?.verdict === 'error') { this.controls.setSongStatus(gate.lyricFree ? 'Instrumental / no lyrics' : 'No lyrics'); this.controls.setStatus(gate.status, 'warn'); return null; }
       this.controls.setSongStatus('No lyrics');
       this.controls.setStatus('No lyrics found — paste lyrics or check artist/title', 'warn');
@@ -361,6 +354,9 @@ class LightShowApp {
 
   async _generate(settings) {
     if (this._generating) return;
+    // QA-20261125-0335: mood/intensity selects removed — Auto mood, song/section intensity (moderate = identity mul)
+    settings.mood = 'auto';
+    settings.intensity = 'moderate';
     this._generating = true;
     this.settings = settings;
     this.controls.setBusy(true, 'Planning…');
@@ -415,6 +411,7 @@ class LightShowApp {
 
       const bpmGuess = this.analyzer?.bpm || 120;
       const sections = this.structure.analyze(this.duration || 180, this.alignment.getPhrases(), { bpm: bpmGuess });
+      try { this.storyRead = buildStoryRead(this.alignment.getPhrases(), { synced: this.alignment.timingSource === 'lrc' && !this.alignment.timingRepaired, duration: this.duration || 180, identity: this.identity.get(), gate: this._songLyricFree ? { verdict: 'lyric-free', lyricFree: true } : this.lyricsParser.lastGate, sections, semantic: sem, fantasyText: settings.fantasy || '' }); sem.storyRead = this.storyRead; this._lyricsMeta = { ...(this._lyricsMeta || {}), storyRead: this.storyRead }; globalThis.__LS_STORYREAD__ = this.storyRead; } catch (_) { /* soft */ } // Lyrics Brain storyRead:
 
       this.emotion.setMood(settings.mood);
       if (this.analyzer?.setGenreContext) {
@@ -425,6 +422,9 @@ class LightShowApp {
           styles: settings.styles || []
         });
       }
+
+      // Audio Pulse songScan: full-song pre-scan before prePlan (Scene locks style at 0s from it)
+      await this._runSongScan(settings);
 
       // HOLD-0338: clear Audio aggression pin + Scene latch on Generate (no Clash→Night Owl bleed)
       try { this.analyzer?.resetHardState?.(); } catch (_) { /* soft */ }
@@ -437,6 +437,8 @@ class LightShowApp {
       try { globalThis.__LS_LYRMOOD__ = lyricMood ? { ...lyricMood, timed: undefined } : null; } catch (_) { /* soft */ }
       this.director.prePlan({
         lyricMood,
+        storyRead: this.storyRead, // Lyrics Brain storyRead:
+        songScan: this.songScan, // Audio Pulse songScan:
         duration: this.duration || 180,
         sections,
         semantic: sem,
@@ -537,7 +539,7 @@ class LightShowApp {
 
     const section = this.structure.sectionAt(t);
     // Lyrics Brain idgate: rule 5 live vocal check — no vocals 60s after first line → lyric-free scenic
-    if (this.alignment.noteVocal?.(t, vocal, audio)) this.controls.setStatus('Instrumental / no matching lyrics: scenic mode', 'warn');
+    if (this.alignment.noteVocal?.(t, vocal, audio)) { this.controls.setStatus('Instrumental / no matching lyrics: scenic mode', 'warn'); try { this.storyRead = buildStoryRead([], { synced: false, duration: this.duration || 0, identity: this.identity.get(), gate: { verdict: 'lyric-free', lyricFree: true, vocalDrop: true } }); globalThis.__LS_STORYREAD__ = this.storyRead; } catch (_) { /* soft */ } } // Lyrics Brain storyRead:
     const lyricState = this.alignment.update(t, vocal, section);
 
     // LIVE lyric→scene: on phrase/line advance, extractLine + reactToLyricConcept (props RT)
@@ -652,6 +654,7 @@ class LightShowApp {
     this._songLyricFree = false;
     this._lastLyricKey = '';
     this._lyricSongKey = null;
+    this.storyRead = null; this._lyricsMeta = null; try { globalThis.__LS_STORYREAD__ = null; } catch (_) { /* soft */ } // Lyrics Brain storyRead:
     try { this.alignment.setPhrases([], 0); } catch (_) { /* soft */ }
     try { if (this.lyricsParser) this.lyricsParser.lastGate = null; } catch (_) { /* soft */ }
     try { this.renderer.resetLyricCaches?.(); } catch (_) { /* soft */ }
@@ -662,9 +665,6 @@ class LightShowApp {
 
   _exitShow() {
     this._resetLyricsForNewSong('exit'); // art7 P0
-    // art5 (QA-0244 #2): chips tapped mid-show don't silently carry into the next song —
-    // restore the setup-screen selection (the defaults unless the user changed them there).
-    try { this.controls.resetStylesToSetup?.(); } catch (_) { /* soft */ }
     this.playing = false;
     this._awaitingGesture = false;
     this._generating = false;
@@ -738,6 +738,39 @@ class LightShowApp {
     const p2 = tryRequest(document.documentElement);
     if (p2) p2.then(onOk).catch(immersiveFallback);
     else immersiveFallback();
+  }
+
+  getStoryRead() { return this.storyRead; } // Lyrics Brain storyRead:
+
+  getSongScan() { return this.songScan; } // Audio Pulse songScan:
+
+  /** Audio Pulse songScan: decode + scan uploaded file once per file/genre; progress in #status-line. */
+  async _runSongScan(settings) {
+    const blob = this._scanBlob;
+    const genre = this.identity.get()?.genre || '';
+    const key = blob ? `${blob.size}|${genre}|${settings.fantasy || ''}|${(settings.styles || []).join(',')}` : null;
+    if (blob && !(this.songScan && this._scanKey === key && this._scanKeyBlob === blob)) {
+      this.controls.setBusy(true, 'Scanning…');
+      this.controls.setStatus('Scanning song… 0%');
+      try {
+        this.songScan = await scanSong(blob, this.audioCtx, {
+          genre, fantasy: settings.fantasy || '', styles: settings.styles || [],
+          onProgress: (p) => this.controls.setStatus(`Scanning song… ${Math.round(p * 100)}%`)
+        });
+        this._scanKey = key; this._scanKeyBlob = blob;
+      } catch (err) {
+        this.songScan = null;
+        try { console.warn('[songScan] failed — live listening fallback', err); } catch (_) { /* */ }
+      }
+      this.controls.setBusy(true, 'Planning…');
+      this.controls.setStatus('Planning…');
+    } else if (!blob) {
+      this.songScan = null; // mic: live listening only
+    }
+    try { this.analyzer?.setSongScan?.(this.songScan); } catch (_) { /* soft */ }
+    try { this.director.songScan = this.songScan; } catch (_) { /* soft */ }
+    try { globalThis.__LS_SONGSCAN__ = this.songScan; } catch (_) { /* soft */ }
+    return this.songScan;
   }
 
   _fmt(sec) {

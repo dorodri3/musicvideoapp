@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Light Show — Imagined Movie</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="css/style.css?v=art8" />
+  <link rel="stylesheet" href="css/style.css?v=mood4" />
 </head>
 <body>
   <div id="setup-screen">
@@ -65,46 +65,10 @@
         <p class="hint">This shapes the world theme, presets, and motifs — the most important creative input.</p>
       </section>
 
-      <section class="panel">
-        <h2>4 · Mood &amp; style</h2>
-        <div class="row">
-          <label style="flex:1;color:var(--muted);font-size:0.85rem">Mood
-            <select id="mood-select">
-              <option value="auto" selected>Auto</option>
-              <option value="dark">Dark</option>
-              <option value="hopeful">Hopeful</option>
-              <option value="aggressive">Aggressive</option>
-              <option value="melancholic">Melancholic</option>
-              <option value="euphoric">Euphoric</option>
-              <option value="tense">Tense</option>
-            </select>
-          </label>
-          <label style="flex:1;color:var(--muted);font-size:0.85rem">Intensity
-            <select id="intensity-select">
-              <option value="low">Low</option>
-              <option value="moderate" selected>Moderate</option>
-              <option value="high">High</option>
-              <option value="extreme">Extreme</option>
-            </select>
-          </label>
-        </div>
-        <p class="hint" style="margin-bottom:8px">Fantasy style (multi-select)</p>
-        <div class="row">
-          <button type="button" data-style="realistic">Realistic</button>
-          <button type="button" data-style="cinematic" class="active">Cinematic</button>
-          <button type="button" data-style="surreal">Surreal</button>
-          <button type="button" data-style="dreamlike" class="active">Dreamlike</button>
-          <button type="button" data-style="mythological">Mythological</button>
-          <button type="button" data-style="sci-fi">Sci-Fi</button>
-          <button type="button" data-style="horror">Horror</button>
-          <button type="button" data-style="abstract">Abstract</button>
-          <button type="button" data-style="epic">Epic</button>
-        </div>
-        <div class="toggles" style="margin-top:12px">
-          <label><input type="checkbox" id="toggle-lyrics" checked /> Lyrics on</label>
-          <label><input type="checkbox" id="toggle-characters" checked /> Characters on</label>
-        </div>
-      </section>
+      <div class="toggles" style="margin:12px 0 4px">
+        <label><input type="checkbox" id="toggle-lyrics" checked /> Lyrics on</label>
+        <label><input type="checkbox" id="toggle-characters" checked /> Characters on</label>
+      </div>
 
       <button type="button" class="primary" id="btn-generate">Generate show</button>
       <div id="status-line"></div>
@@ -119,18 +83,6 @@
     <div id="show-overlay">
       <div id="hud-info"></div>
       <div class="overlay-chrome">
-        <button type="button" id="btn-styles-toggle" class="styles-toggle" aria-expanded="false" aria-label="Show style options" onclick="var c=this.parentNode;var o=c.classList.toggle('styles-open');this.setAttribute('aria-expanded',o);">&#9776; Style</button>
-        <div class="overlay-styles" role="group" aria-label="Mood and style">
-          <button type="button" data-style="realistic">Realistic</button>
-          <button type="button" data-style="cinematic" class="active">Cinematic</button>
-          <button type="button" data-style="surreal">Surreal</button>
-          <button type="button" data-style="dreamlike" class="active">Dreamlike</button>
-          <button type="button" data-style="mythological">Mythological</button>
-          <button type="button" data-style="sci-fi">Sci-Fi</button>
-          <button type="button" data-style="horror">Horror</button>
-          <button type="button" data-style="abstract">Abstract</button>
-          <button type="button" data-style="epic">Epic</button>
-        </div>
         <div class="overlay-btns">
           <button type="button" id="btn-fullscreen">Fullscreen</button>
           <button type="button" id="btn-exit">Exit</button>
@@ -139,6 +91,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/main.js?v=art8"></script>
+  <script type="module" src="js/main.js?v=mood4"></script>
 </body>
 </html>

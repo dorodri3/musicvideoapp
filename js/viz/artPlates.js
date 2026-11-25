@@ -23,7 +23,9 @@ export const ART_WORLDS = {
   storm: { rim: 'rgba(200,170,255,0.95)', pan: [0.08, 0.42], stage: 0.46, fx: 'rain', light: 1 },
   red_void: { rim: 'rgba(255,70,60,0.95)', pan: [0.1, 0.9], fx: 'embers', light: 1 },
   dark_sparse: { rim: 'rgba(190,205,235,0.9)', pan: [0.15, 0.85], fx: null, light: 1 },
-  cathedral_space: { rim: 'rgba(255,215,170,0.92)', pan: [0.25, 0.75], fx: 'motes', light: 1 }
+  cathedral_space: { rim: 'rgba(255,215,170,0.92)', pan: [0.25, 0.75], fx: 'motes', light: 1 },
+  country_porch: { rim: 'rgba(255,205,135,0.95)', pan: [0.34, 0.66], fx: null, ground: 0.79, stage: 0.48, light: -1 },
+  cozy_autumn: { rim: 'rgba(255,205,135,0.95)', pan: [0.34, 0.66], fx: null, ground: 0.79, stage: 0.48, light: -1 }
 };
 /**
  * art6: the painting's own geography, in PLATE coordinates (u across the image width, v down the
@@ -46,9 +48,11 @@ export const WORLD_GEO = {
   storm: { gp: [[0, 0.6], [0.15, 0.62], [0.3, 0.66], [0.37, 0.69]], walk: [0.03, 0.35], focal: [[0.62, 0.3, 0.12]], fh: 0.09, water: [0.4, 1, 0.72], birds: 'crows', accent: 'lightning', mist: '180,170,215' },
   red_void: { gp: [[0, 0.72], [0.5, 0.7], [1, 0.72]], walk: [0.06, 0.94], focal: [[0.5, 0.33, 0.12], [0.5, 0.88, 0.1]], fh: 0.085, water: [0, 1, 0.74], birds: 'crows', accent: 'lightning', mist: '150,40,40' },
   dark_sparse: { gp: [[0, 0.86], [0.5, 0.81], [1, 0.86]], walk: [0.06, 0.94], focal: [[0.47, 0.2, 0.06], [0.6, 0.45, 0.06]], fh: 0.12, water: null, birds: 'crows', accent: 'lamp', mist: '190,205,230' },
-  cathedral_space: { gp: [[0, 0.86], [0.5, 0.81], [1, 0.86]], walk: [0.08, 0.92], focal: [[0.48, 0.18, 0.12], [0.5, 0.55, 0.1]], fh: 0.12, water: null, birds: null, accent: 'rays', mist: '255,225,190' }
+  cathedral_space: { gp: [[0, 0.86], [0.5, 0.81], [1, 0.86]], walk: [0.08, 0.92], focal: [[0.48, 0.18, 0.12], [0.5, 0.55, 0.1]], fh: 0.12, water: null, birds: null, accent: 'rays', mist: '255,225,190' },
+  country_porch: { gp: [[0, 0.79], [0.5, 0.79], [1, 0.79]], walk: [0.34, 0.62], focal: [[0.34, 0.40, 0.14], [0.56, 0.59, 0.10]], fh: 0.135, water: null, birds: null, accent: 'lamp', mist: '255,205,148' },
+  cozy_autumn: { gp: [[0, 0.79], [0.5, 0.79], [1, 0.79]], walk: [0.34, 0.62], focal: [[0.34, 0.40, 0.14], [0.56, 0.59, 0.10]], fh: 0.135, water: null, birds: null, accent: 'lamp', mist: '255,205,148' }
 };
-const VER = 'art8';
+const VER = 'mood4';
 const PLATE_ALPHA = 1.0;
 const XFADE = 1.6;
 /** art7 (QA-0350): hard→hard world swaps (storm → red_void …) looked muddy/ghosted as a 1.6s
@@ -65,13 +69,21 @@ function load(src) {
 }
 function get(id) {
   if (!ART_WORLDS[id]) return null;
-  if (!cache[id]) cache[id] = { bg: load(`${BASE}${id}/bg.jpg?v=${VER}`) };
+  const folder = id === 'cozy_autumn' ? 'country_porch' : id;
+  if (!cache[id]) cache[id] = { bg: load(`${BASE}${folder}/bg.jpg?v=${VER}`) };
   return cache[id];
 }
 const ready = (img) => img && img.complete && img.naturalWidth > 0;
 export function preloadArt() { for (const id of Object.keys(ART_WORLDS)) get(id); }
 const smooth = (x) => x * x * (3 - 2 * x);
 const hash = (s) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 9973; return h / 9973; };
+
+/** polish6: velocity-continuous soft clamp of v into [lo,hi] with a tanh shoulder of width z. */
+function softBound(v, lo, hi, z) {
+  if (v > hi - z) return hi - z + z * Math.tanh((v - (hi - z)) / z);
+  if (v < lo + z) return lo + z - z * Math.tanh((lo + z - v) / z);
+  return v;
+}
 
 export class ArtPlates {
   constructor() {
@@ -122,7 +134,7 @@ export class ArtPlates {
     const seed = hash(id) * 6.28;
     const local = Math.max(0, t - (this.since[id] ?? t));
     // Pan: one slow traverse of the scene per visit (ease in/out), then a gentle drift back.
-    const span = this.hard ? 22 : 34; // seconds for one traverse
+    const span = this.panSpan || (this.hard ? 22 : 34); // seconds for one traverse (style1: mood sets a held/slow pan)
     const [p0, p1] = cfg.pan || [0.1, 0.9];
     const ph = (local / span) % 2;
     let k = ph < 1 ? smooth(ph) : 1 - smooth(ph - 1);
@@ -138,7 +150,15 @@ export class ArtPlates {
     // beat push zooms toward the frame centre (keep centre fixed)
     // art6 (bass → world sway): a slow few-px drift with the low end, kept inside the spare width
     const swayPx = Math.min(spareX * 0.04, w * 0.012) * (this.bassSway || 0) * Math.sin(t * 0.9 + seed);
-    const x = Math.max(-spareX, Math.min(0, -spareX * u + swayPx));
+    let x = Math.max(-spareX, Math.min(0, -spareX * u + swayPx));
+    // polish6 item 1: keep the figure's plate anchor inside its screen band — soft (velocity-continuous) clamp of the pan,
+    // so the plate eases to a stop instead of carrying the figure off-frame (no fade/teleport needed in the renderer).
+    const K = this.keep;
+    if (K && K.id === id && Number.isFinite(K.u)) {
+      const lo = K.lo * w, hi = K.hi * w, z = Math.max(1, Math.min(w * 0.06, (hi - lo) / 3));
+      const sx = x + K.u * dw, sx2 = softBound(sx, lo, hi, z);
+      x = Math.max(-spareX, Math.min(0, sx2 - K.u * dw));
+    }
     const y = -spareY * vy;
     if (alpha > 0) { ctx.globalAlpha = alpha; ctx.drawImage(img, x, y, dw, dh); }
     const prevMap = this.map[id];
@@ -190,7 +210,7 @@ export class ArtPlates {
     if (lift > 0.01) {
       ctx.globalCompositeOperation = 'soft-light';
       ctx.globalAlpha = Math.min(this.hard ? 0.26 : 0.2, lift);
-      ctx.fillStyle = this.hard ? '#ffd8b0' : '#ffeedd';
+      ctx.fillStyle = this.liftColor || (this.hard ? '#ffd8b0' : '#ffeedd'); // style1: lift in the locked grade's key
       ctx.fillRect(0, 0, w, h);
     }
     ctx.restore();
@@ -234,15 +254,23 @@ export class ArtPlates {
     // pads → mist bands drifting along the ground line
     const mistA = (0.04 + 0.2 * lv.pads) * a;
     if (mistA > 0.02) {
+      if (!this._mistSpr || this._mistKey !== G.mist) {
+        this._mistKey = G.mist;
+        const c = this._mistSpr || (this._mistSpr = document.createElement('canvas')); c.width = 128; c.height = 128;
+        const g = c.getContext('2d'); g.clearRect(0, 0, 128, 128);
+        const rg = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+        rg.addColorStop(0, `rgba(${G.mist},1)`); rg.addColorStop(1, `rgba(${G.mist},0)`);
+        g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
+      }
       const gv = G.gp[Math.floor(G.gp.length / 2)][1];
+      const rx = w * 0.7, ry = rx * 0.18;
       for (let i = 0; i < 3; i++) {
         const yy = S(0, gv - 0.06 + i * 0.05)[1];
         const xx = ((t * (6 + i * 4) + i * w * 0.4) % (w * 1.6)) - w * 0.3;
-        const gr = ctx.createRadialGradient(xx, yy, 0, xx, yy, w * 0.7);
-        gr.addColorStop(0, `rgba(${G.mist},${mistA * (1 - i * 0.22)})`); gr.addColorStop(1, `rgba(${G.mist},0)`);
-        ctx.save(); ctx.translate(xx, yy); ctx.scale(1, 0.18); ctx.translate(-xx, -yy);
-        ctx.fillStyle = gr; ctx.fillRect(xx - w * 0.7, yy - w * 0.7, w * 1.4, w * 1.4); ctx.restore();
+        ctx.globalAlpha = mistA * (1 - i * 0.22);
+        ctx.drawImage(this._mistSpr, xx - rx, yy - ry, rx * 2, ry * 2);
       }
+      ctx.globalAlpha = 1;
     }
     // bass → ripples (water worlds) / ground pulse rings at the dreamer's feet
     if (au.beat && lv.bass > 0.45 && (A.ripples.length < 4)) {
@@ -260,8 +288,11 @@ export class ArtPlates {
     // guitar / synth → the world's accent agent
     const ac = lv.accent;
     ctx.globalCompositeOperation = 'screen';
-    if (G.accent === 'lightning') {
-      if (ac > 0.4 && t - A.boltAt > 2.6 && (au.beat || (au.onset || 0) > 0.6)) {
+    // style1: only accents the locked style allows (this.allow = {accent:Set, birds:bool} | null)
+    const SG = state?.stormGain ?? 1;
+    const ACC = ((!this.allow || this.allow.accent.has(G.accent)) && !(typeof this.never === 'function' && this.never(G.accent))) ? G.accent : null; // fixmood2: never-list gate
+    if (ACC === 'lightning' && SG > 0.03) {
+      if (SG > 0.35 && ac > 0.4 && t - A.boltAt > 2.6 && (au.beat || (au.onset || 0) > 0.6)) {
         A.boltAt = t; const f = G.focal[0]; const bu = Math.max(0.05, Math.min(0.95, f[0] + (Math.random() - 0.5) * 0.3));
         const pts = []; let px = S(bu, 0)[0], py = S(0, 0.02)[1]; const yEnd = S(0, f[1] + 0.05)[1];
         while (py < yEnd) { pts.push([px, py]); px += (Math.random() - 0.5) * w * 0.06; py += h * (0.03 + Math.random() * 0.03); }
@@ -269,14 +300,16 @@ export class ArtPlates {
       }
       const age = t - A.boltAt;
       if (A.bolt && age < 0.35) {
-        const fl = (1 - age / 0.35);
+        const fl = (1 - age / 0.35) * SG;
         ctx.globalAlpha = 0.18 * fl * a; ctx.fillStyle = 'rgb(220,215,255)'; ctx.fillRect(0, 0, w, h);
-        ctx.globalAlpha = 0.85 * fl * a; ctx.strokeStyle = 'rgb(235,230,255)'; ctx.lineWidth = 1.6; ctx.shadowColor = 'rgba(200,190,255,1)'; ctx.shadowBlur = 10;
-        ctx.beginPath(); A.bolt.forEach((p0, i) => i ? ctx.lineTo(p0[0], p0[1]) : ctx.moveTo(p0[0], p0[1])); ctx.stroke(); ctx.shadowBlur = 0;
+        ctx.beginPath(); A.bolt.forEach((p0, i) => i ? ctx.lineTo(p0[0], p0[1]) : ctx.moveTo(p0[0], p0[1]));
+        ctx.globalAlpha = 0.28 * fl * a; ctx.strokeStyle = 'rgb(200,190,255)'; ctx.lineWidth = 6; ctx.stroke();
+        ctx.globalAlpha = 0.85 * fl * a; ctx.strokeStyle = 'rgb(235,230,255)'; ctx.lineWidth = 1.6; ctx.stroke();
       }
-    } else if (G.accent === 'neon' || G.accent === 'lamp' || G.accent === 'flare') {
+    } else if (ACC === 'neon' || ACC === 'lamp' || ACC === 'flare') {
       const flick = ac * (0.55 + 0.45 * Math.sin(t * 23) * Math.sin(t * 7.3)) + 0.15 * A.burst;
-      const col = G.accent === 'neon' ? (i) => (i ? 'rgba(80,190,255,' : 'rgba(255,60,200,') : G.accent === 'lamp' ? () => 'rgba(200,225,255,' : () => 'rgba(255,120,40,';
+      const warmLamp = id === 'country_porch' || id === 'cozy_autumn';
+      const col = G.accent === 'neon' ? (i) => (i ? 'rgba(80,190,255,' : 'rgba(255,60,200,') : G.accent === 'lamp' ? () => (warmLamp ? 'rgba(255,190,105,' : 'rgba(200,225,255,') : () => 'rgba(255,120,40,';
       G.focal.forEach((f, i) => {
         if (G.accent === 'lamp' && i === 0) return; // the moon doesn't flicker
         const [fx, fy] = S(f[0], f[1]); const rr = f[2] * m.dw * (G.accent === 'flare' ? 0.9 : 0.7);
@@ -284,7 +317,7 @@ export class ArtPlates {
         gr.addColorStop(0, col(i) + (0.35 * flick * a) + ')'); gr.addColorStop(1, col(i) + '0)');
         ctx.globalAlpha = 1; ctx.fillStyle = gr; ctx.fillRect(fx - rr, fy - rr, rr * 2, rr * 2);
       });
-    } else if (G.accent === 'aurora' || G.accent === 'rays') {
+    } else if (ACC === 'aurora' || ACC === 'rays') {
       const al = (0.05 + 0.3 * ac) * a;
       if (al > 0.04) {
         ctx.globalAlpha = 1;
@@ -312,7 +345,7 @@ export class ArtPlates {
           }
         }
       }
-    } else if (G.accent === 'fireflies') { // swirl of fireflies around the dreamer (or the glade)
+    } else if (ACC === 'fireflies') { // swirl of fireflies around the dreamer (or the glade)
       const n = Math.floor((6 + 26 * ac) * q);
       const [cx, cy] = feet ? [feet[0], feet[1] - h * 0.06] : S(0.5, G.gp[1][1] - 0.08);
       for (let i = 0; i < n; i++) {
@@ -324,7 +357,7 @@ export class ArtPlates {
     }
     ctx.globalCompositeOperation = 'source-over';
     // animals → a small flock crossing the sky every ~25–40s (sooner on hats sparkle)
-    if (G.birds) {
+    if (G.birds && (!this.allow || this.allow.birds)) {
       if (!A.birds && t - A.birdsAt > (lv.accent > 0.4 ? 18 : 30)) {
         const dir = Math.random() < 0.5 ? 1 : -1;
         A.birds = { t0: t, dir, y: h * (0.12 + Math.random() * 0.18), n: 5 + Math.floor(Math.random() * 5), seed: Math.random() * 10 };
@@ -357,6 +390,7 @@ export class ArtPlates {
   drawFg(ctx, w, h, state, baseXform = null, quality = 1) {
     const id = this.active(); if (!id) return;
     const fx = ART_WORLDS[id]?.fx; if (!fx) return;
+    if (typeof this.never === 'function' && this.never(fx)) return; // fixmood2: style never-list (Candy never rains)
     const t = state?.t || 0;
     const e = Math.min(1, Number(state?.audio?.energy || 0));
     const q = Math.max(0.5, Math.min(1, quality));
@@ -364,10 +398,11 @@ export class ArtPlates {
     ctx.save();
     if (baseXform) ctx.setTransform(baseXform);
     ctx.globalCompositeOperation = 'source-over';
-    if (fx === 'rain') {
+    const SG = state?.stormGain ?? 1;
+    if (fx === 'rain' && SG > 0.03) {
       const n = Math.floor((70 + e * 60) * q * (1 + 1.4 * this.ag.burst));
       ctx.strokeStyle = 'rgba(210,220,255,0.9)'; ctx.lineWidth = 1;
-      ctx.globalAlpha = Math.min(0.5, (0.18 + e * 0.14 + 0.12 * this.ag.burst) * a);
+      ctx.globalAlpha = Math.min(0.5, (0.18 + e * 0.14 + 0.12 * this.ag.burst) * a * SG);
       ctx.beginPath();
       for (let i = 0; i < n; i++) {
         const sp = 620 + (i % 7) * 70;

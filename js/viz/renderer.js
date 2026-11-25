@@ -3,14 +3,42 @@
  * Roles animate HOW the world moves; lyrics direct WHAT world.
  * Prefer audio.roles || audio.instruments (see js/audio/ROLES.md).
  */
-import { ContinuityEngine } from '../scene/continuity.js?v=art8';
-import { CameraSystem } from '../camera/system.js?v=art8';
-import { LightingSystem } from '../lighting/system.js?v=art8';
-import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=art8';
-import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=art8';
-import { getMotionComfort } from '../a11y/motionPrefs.js?v=art8';
-import { ArtPlates, ART_WORLDS, drawHumanSilhouette } from './artPlates.js?v=art8';
-import { drawPerformer, roleLook } from './performers.js?v=art8';
+import { ContinuityEngine } from '../scene/continuity.js?v=mood4';
+import { CameraSystem } from '../camera/system.js?v=mood4';
+import { LightingSystem } from '../lighting/system.js?v=mood4';
+import { TypographySystem, TYPO_BUILD } from '../typography/system.js?v=mood4';
+import { resolveCastLook, drawCastFigure, drawRoleAgentFx, drawWeaponProp, ARCHETYPE_IDS, OUTFIT_IDS } from './castLibrary.js?v=mood4';
+import { getMotionComfort } from '../a11y/motionPrefs.js?v=mood4';
+import { ArtPlates, ART_WORLDS, drawHumanSilhouette } from './artPlates.js?v=mood4';
+import { drawPerformer, roleLook } from './performers.js?v=mood4';
+import { VISUAL_STYLES, STYLE_GRADES, normStyle, resolveKit, applyStyleGrade, KitPainter, resolveComposition, capKit, applyComposition, neverHas } from './styleKit.js?v=mood4';
+import { styleFamilyOf, pinnedWorld } from '../scene/styleFamilies.js?v=mood4';
+
+/** style1: merge (never clobber) QA fields into globalThis.__LS_ART__. */
+function artLog(fields) {
+  try { const g = globalThis; g.__LS_ART__ = Object.assign(g.__LS_ART__ && typeof g.__LS_ART__ === 'object' ? g.__LS_ART__ : {}, fields); } catch (_) { /* soft */ }
+}
+const MOVE_LOG = { idle_sway: 'sway', look_toward: 'gaze', look_up: 'gaze', turn: 'turn', brace: 'brace', step_back: 'step_back', raise_arms: 'raise_arms', walk: 'walk', idle: 'idle',
+  // Scene per-style verbs (reaction.js STYLE-BIBLE Addendum 4) → tester vocabulary
+  still_breath: 'idle', slow_head_turn: 'turn', freeze: 'brace', startle: 'brace', lift_lantern: 'raise_arms',
+  watch_vista: 'gaze', shield_eyes: 'gaze', head_low: 'idle', gaze: 'gaze', look_down: 'gaze', look_toward_light: 'gaze', lift_head: 'gaze', hold_memory: 'idle',
+  bounce: 'sway', wave: 'sway', point_up: 'raise_arms', dance: 'sway', defiant: 'idle', scan: 'gaze', raise_fists: 'raise_arms', headbang: 'sway' };
+const IDLE_VERBS = new Set(['idle_sway', 'still_breath', 'watch_vista', 'head_low', 'bounce', 'defiant', 'idle']);
+const UP_VERBS = new Set(['look_up', 'raise_arms', 'lift_head', 'point_up', 'lift_lantern', 'look_toward_light', 'reach']);
+function triggerOf(why, target, verb) {
+  const s = `${why || ''} ${target || ''}`.toLowerCase();
+  if (verb === 'walk') return 'scene_walk';
+  if (/lightning|white_flash|sky_tear|flash/.test(s)) return 'lightning';
+  if (/bird|crow/.test(s)) return 'bird';
+  if (/fire|furnace|beast/.test(s)) return 'fire';
+  if (/storm|rain|wind/.test(s)) return 'storm';
+  if (/kick/.test(s)) return 'kick';
+  if (/drop|collapse|blackout/.test(s)) return 'drop';
+  if (/onset|peak|energy|section/.test(s)) return 'onset';
+  if (IDLE_VERBS.has(verb) || !verb || /^idle/.test(s.trim())) return 'none';
+  return 'focal';
+}
+
 
 
 /** HOLD-0330: module-level HUD — never depends on prototype lookup (TypeError-proof). */
@@ -37,6 +65,12 @@ function drawDebugHudImpl(ctx, w, h, directive, audio) {
     `hotMs ${hud.hotMs ?? '—'}  energy ${hud.energy ?? (audio?.energy != null ? Number(audio.energy).toFixed(3) : '—')}  kick ${hud.kick ?? '—'}`,
     `preset ${preset}  pack ${directive?.packFamily || hud.packFamily || '—'}  ladder ${hud.ladder || vibe.ladder || '—'}`
   ];
+  try { // style1: style lock + reactive cast proof
+    const A = globalThis.__LS_ART__ || {};
+    lines.push(`style ${A.styleLock || '—'} (${A.styleSource || '—'}) @${A.styleLatchedAt != null ? Math.round(A.styleLatchedAt) : '—'}  changes ${A.styleChanges || 0}`);
+    lines.push(`cast ${A.castMove || '—'} ← ${A.castTrigger || '—'}  lat ${A.castLatencyMs != null ? A.castLatencyMs + 'ms' : '—'}  walk ${!!A.castWalking}  startle ${A.startleCount || 0}/${A.startleSuppressed || 0}`);
+    lines.push(`outfit ${A.castOutfit || '—'}  kit ${(A.styleKitActive || []).join(',').slice(0, 60)}`);
+  } catch (_) { /* soft */ }
 
   // Paint never throws — box + text each guarded (empty B5 box = text fail)
   try {
@@ -72,6 +106,21 @@ function drawDebugHudImpl(ctx, w, h, directive, audio) {
     try { ctx.restore(); } catch (_) { /* soft */ }
   } catch (_) { /* never throw from HUD */ }
 }
+
+/**
+ * polish6 (bot 1 22:21): while Scene's stylePending is set, Visual renders a LIVING NEUTRAL scene — no dim pass of its own:
+ * the plate Scene sends (neutral desat grade), music-driven motion/light, lyrics, a plain neutral figure, no kit/outfit.
+ * At the latch: ONE ~1s crossfade (snapshot of the last neutral frame fading out over the locked look).
+ */
+const NEUTRAL_STYLE = Object.freeze({
+  id: 'neutral', source: 'pending', latchedAt: null,
+  grade: Object.freeze({ key: '205,206,210', shadow: '10,10,12', rim: '214,216,222', mist: '170,172,178', accent: '224,224,226' }),
+  VS: { cast: { outfit: 'neutral_plain', hood: false, coat: 'jacket', prop: null, swayMul: 0.45, hunch: 0.15,
+    moves: { idle_sway: 'stand', look_toward: 'stand', look_up: 'look_up', turn: 'turn', brace: 'brace', step_back: 'step_back', raise_arms: 'open', walk: 'walk', startle: 'brace', freeze: 'brace' } } },
+  kit: { elements: new Set(), peakMax: 0, figure: null }
+});
+const NEUTRAL_COMP = Object.freeze({ look: 'neutral', focalU: 0.42, focalV: 0.62, scale: 1, chaos: 0, motionMul: 0.5, intensity: 0.4, tilt: 0, maxElements: 0, fauna: false, warmLight: false, mode: 'quiet' });
+const XFADE_MS = 1000;
 
 export class Renderer {
   constructor(canvas) {
@@ -115,6 +164,61 @@ export class Renderer {
     this._lastChaosPeakAt = 0;
     // HOLD-0330: bind HUD on instance so missing prototype never TypeErrors
     this._drawDebugHud = drawDebugHudImpl.bind(this);
+    // style1: per-track style lock + kit + reactive dreamer
+    this.kitPainter = new KitPainter();
+    this._resetStyleTrack();
+  }
+
+  /** style1: new track / show start → unlatch style, clear reaction state (castLog survives for QA). */
+  _resetStyleTrack() {
+    this._style = null;
+    this._styleChanges = 0;
+    this._sd = null;
+    try { this.kitPainter.reset(); } catch (_) { /* soft */ }
+    if (this.typography) this.typography.styleTypo = null;
+    if (this.lighting) this.lighting.styleColors = null;
+    if (this.art) { this.art.allow = null; this.art.never = null; this.art.liftColor = null; this.art.panSpan = null; this.art.keep = null; }
+    this._worldKeep = null; this._clampLast = null; this._softClamp = false; this._heavyStorm = null;
+    this._styleShownAt = null; this._styleShownId = null; this._prerollStart = null; this._neutralSeen = false; this._neutral = false; this._xfade = null; this._drawnStyles = []; this._tiltA = 0; this._tiltLogged = 0;
+    artLog({ tiltDeg: 0, castPose: null, castJumps: 0, candyFriends: 0, candyFriendsShown: 0, styleShownAt: null, styleShown: null, stylesDrawn: [], styleDrawnNonFinal: false, neutral: null, styleLock: null, styleSource: null, styleLatchedAt: null, styleChanges: 0, startleCount: 0, startleSuppressed: 0 });
+  }
+
+  /**
+   * style1 / CEO rule 1: ONE grade per track. Follows Scene's directive.styleLock|styleLook (+ styleGrade)
+   * when present; else latches from the first preset's Worlds family. The grade object is latched at
+   * lock time and held — hard/soft and world changes only modulate strength, never the palette.
+   */
+  _updateStyle(directive, now) {
+    const d = directive || {};
+    let id = normStyle(d.styleLock || d.styleLook || d.styleFamily || (typeof d.style === 'string' ? d.style : null));
+    let origin = 'scene';
+    if (!id || !VISUAL_STYLES[id]) {
+      if (this._style) return this._style;
+      const fam = normStyle(styleFamilyOf(d.preset));
+      if (!fam || !VISUAL_STYLES[fam]) return null;
+      id = fam; origin = 'preset';
+    }
+    const srcRaw = String(d.styleSource || d.styleLookSource || 'auto');
+    const source = /^chip|^tap/.test(srcRaw) ? 'chip' : 'auto';
+    const pending = !!(d.neutralHold || d.stylePending);
+    if (this._style && this._style.id === id) {
+      if (this._style.origin === 'preset' && origin === 'scene') { this._style.origin = 'scene'; this._style.source = source; }
+      if (this._style.pending && !pending) { this._style.pending = false; this._style.latchedAt = now; this._style.source = source; artLog({ stylePending: false, styleLatchedAt: now, styleSource: source }); }
+      return this._style;
+    }
+    const prev = this._style;
+    // Scene auditions Auto for ≤6s of intro (stylePending) — those swaps are not mid-song changes
+    if (prev && !prev.pending && prev.origin === 'scene') { this._styleChanges++; this._styleChangeWhy = source === 'chip' ? 'chip' : 'scene-unexpected'; }
+    const sceneGrade = (d.styleGrade && typeof d.styleGrade === 'object') ? d.styleGrade : null;
+    const grade = Object.freeze({ ...(STYLE_GRADES[id] || {}), ...(sceneGrade || {}) });
+    const VS = VISUAL_STYLES[id];
+    this._style = { id, grade, source, origin, srcRaw, latchedAt: now, VS, kit: resolveKit(id, (d.styleKit && typeof d.styleKit === 'object') ? d.styleKit : null), pending };
+    try { this.kitPainter.reset(); } catch (_) { /* soft */ }
+    this._sd = null;
+    this._applyStyleCfg(this._style);
+    globalThis.__LS_STYLE__ = { id, latchedAt: now, source };
+    artLog({ styleLock: id, styleSource: source, styleLatchedAt: now, stylePending: pending, styleOrigin: origin, styleSceneSource: srcRaw, styleChanges: this._styleChanges, styleChangeWhy: this._styleChangeWhy || null, styleKitSource: this._style.kit?.source || null });
+    return this._style;
   }
 
   setQuality(q) {
@@ -157,6 +261,7 @@ export class Renderer {
 
   start(frameFn) {
     this.onFrame = frameFn;
+    this._resetStyleTrack(); // style1: show start = new track → fresh style latch
     this.running = true;
     this._last = performance.now();
     this._fpsCheck = this._last;
@@ -171,8 +276,10 @@ export class Renderer {
         this.fps = this._frames;
         this._frames = 0;
         this._fpsCheck = now;
-        if (this.fps < 40 && this.quality > 0.55) this.setQuality(this.quality - 0.1);
-        else if (this.fps > 55 && this.quality < 1) this.setQuality(Math.min(1, this.quality + 0.05));
+        if (now - (this._qChangedAt || 0) > 1500) {
+          if (this.fps < 42 && this.quality > 0.55) { this._qChangedAt = now; this.setQuality(this.quality - 0.1); }
+          else if (this.fps > 56 && this.quality < 1) { this._qChangedAt = now; this.setQuality(Math.min(1, this.quality + 0.05)); }
+        }
       }
       this._resize();
       if (this.onFrame) this.onFrame(dt, now);
@@ -183,6 +290,7 @@ export class Renderer {
   stop() {
     this.running = false;
     if (this._raf) cancelAnimationFrame(this._raf);
+    this._resetStyleTrack();
   }
 
   _roles(audio) {
@@ -941,7 +1049,7 @@ export class Renderer {
 
   render(payload) {
     const {
-      directive,
+      directive: _dirRaw,
       audio,
       emotion,
       phrase,
@@ -957,7 +1065,12 @@ export class Renderer {
     const roles = this._roles(audio);
 
     // Live vibe ladder → lighting/motion (Audio vibe-match; Scene packs may lag)
+    try { this._updateStyle(_dirRaw, now); } catch (_) { /* soft */ }
+    // fixmood2: Visual-side world clamp (pinned world / never-list) BEFORE anything reads the preset
+    let directive = _dirRaw;
+    try { directive = this._clampWorld(_dirRaw, now); } catch (_) { directive = _dirRaw; }
     this._vibeMatch = this._deriveVibeAggression(audio, directive, emotion);
+    try { this._comp = this._style ? resolveComposition(directive, this._style.id) : null; } catch (_) { this._comp = null; }
 
     const rolesIntent = this._rolesIntent(directive);
     this._updateInstruments(audio, dt, now, rolesIntent);
@@ -989,15 +1102,18 @@ export class Renderer {
         } else if (ev === 'collapse') {
           this._glitch = Math.max(this._glitch, 0.7);
           this._vignette = Math.max(this._vignette, 0.85);
-          if (!_c.muteGroundShake) this._groundShake = Math.max(this._groundShake, 16 * locScale);
+          // style1/Camera: _groundShake only on kick/drop — collapse shakes only when the drop is live
+          if (!_c.muteGroundShake && Number(audio?.drop || 0) > 0.5) this._groundShake = Math.max(this._groundShake, 16 * locScale);
         }
       }
     }
     this.lighting.setModes(directive?.lighting || ['wash']);
+    const neuLive = !!(directive?.neutralHold || directive?.stylePending || this._neutral);
+    const liveInt = neuLive ? Math.max(0.55, Math.min(0.95, Number(audio?.energy || 0) * 0.9 + 0.35)) : (directive?.intensity || 0.5);
     const light = this.lighting.update(
       audio,
       emotion,
-      directive?.intensity || 0.5,
+      liveInt,
       this._vibeMatch
     );
 
@@ -1047,8 +1163,14 @@ export class Renderer {
       emotion,
       (directive?.scale?.cameraMul || 1) * this._worldScale,
       camRi,
-      directive?.cast ?? directive?.characters ?? null
+      directive?.cast ?? directive?.characters ?? null,
+      directive ?? null // Camera style-lock reactions: read-only (reaction, focal, events, styleLook, preset)
     );
+
+    // polish6: neutral hold while Scene's stylePending is set (living scene, no dim); latch → one ~1s crossfade
+    this._neutral = this._neutralGate(directive, now, ctx, w, h);
+    if (this._neutral) { if (this.typography) this.typography.styleTypo = null; if (this.lighting) this.lighting.styleColors = null; }
+    if (this._style && !this._neutral) this._noteDrawn(this._style.id);
 
     ctx.save();
     ctx.fillStyle = '#000';
@@ -1070,7 +1192,7 @@ export class Renderer {
       t,
       audio: audio || { energy: 0, bass: 0, mid: 0, treble: 0, onset: 0, beat: false, roles: {}, instruments: {} },
       emotion: emotion || {},
-      intensity: directive?.intensity || 0.5,
+      intensity: this._neutral ? liveInt : (directive?.intensity || 0.5),
       palette: directive?.palette || [],
       characters: this.showCharacters || !!cast,
       cast,
@@ -1084,20 +1206,33 @@ export class Renderer {
       roles,
       quality: this.quality,
       // HOLD-0321: Worlds hard flags → presets fauna/soft-strip
-      forbidPastoral: !!(directive?.forbidPastoral || directive?.hardOnly || this._hardLock),
-      hardLock: !!(directive?.hardLock || directive?.hardOnly || this._hardLock),
-      hardOnly: !!directive?.hardOnly
+      forbidPastoral: !this._softClamp && !!(directive?.forbidPastoral || directive?.hardOnly || this._hardLock),
+      hardLock: !this._softClamp && !!(directive?.hardLock || directive?.hardOnly || this._hardLock),
+      hardOnly: !!directive?.hardOnly,
+      stormGain: (() => {
+        const isH = this._style?.id === 'ember_wasteland' && !this._neutral;
+        const quietH = isH && this._comp && (this._comp.mode === 'quiet' || (!this._comp.loud && (this._comp.chaos ?? 0) < 0.25));
+        const tgt = quietH ? 0 : 1;
+        if (this._heavyStorm == null) this._heavyStorm = tgt;
+        else this._heavyStorm += (tgt - this._heavyStorm) * (1 - Math.exp(-Math.min(0.1, dt) / 0.7));
+        return this._heavyStorm;
+      })()
     };
 
     const coherentTr = this._resolveCoherentTransition(directive, audio, this._vibeMatch);
     this.continuity.draw(ctx, w, h, state, coherentTr);
     // art1: painted plate over procedural fallback (procedural bleeds through lightly)
     const _artPreset = this._pickArtWorld((coherentTr && coherentTr.to && coherentTr.progress < 1) ? coherentTr.to : state.preset, directive, audio, t);
-    this._artOn = this.art.drawBg(ctx, w, h, _artPreset, state, !!getMotionComfort().reduceMotion, !!this._artHard, _baseXform);
+    // polish6 item 3: composition.horizonTilt (alias tilt) rotates the world layers (plate, agents, kit midground) about the
+    // figure's feet; lyrics/typography stay level (drawn later in screen space). See _worldTiltXf for units.
+    const _tiltXf = this._worldTiltXf(w, h, now);
+    this._tiltXfNow = _tiltXf;
+    const _worldBase = _tiltXf ? DOMMatrix.fromMatrix(_baseXform).multiply(_tiltXf) : _baseXform;
+    this._artOn = this.art.drawBg(ctx, w, h, _artPreset, state, !!getMotionComfort().reduceMotion, !!this._artHard, _worldBase);
     // art2: old procedural fg layers are off; fg = light rain/embers/fireflies over the painting
-    if (this._artOn) this.art.drawFg(ctx, w, h, state, _baseXform, this.quality);
+    if (this._artOn && !this._style) this.art.drawFg(ctx, w, h, state, _baseXform, this.quality); // style1: kit owns particles
     // art6: audio roles → scenic agents in the world (mist, ripples, lightning/neon/aurora, birds)
-    if (this._artOn) this.art.drawAgents(ctx, w, h, state, _baseXform, this.quality, this._dreamFeet || null);
+    if (this._artOn) this.art.drawAgents(ctx, w, h, state, _worldBase, this.quality, this._dreamFeet || null);
     if (this._artOn) {
       // art3: ease the cast ground line + stage x between worlds (no jump on world change)
       const act = this.art.active();
@@ -1128,7 +1263,7 @@ export class Renderer {
     }
 
     // Hats → spark / rain needles (density × quality)
-    if (this._sparkBurst > 0.08) {
+    if (this._sparkBurst > 0.08 && !this._style && !this._neutral) { // polish6: locked styles — the kit owns particles (Candy never rains)
       ctx.save();
       ctx.strokeStyle = `rgba(220,230,255,${0.28 + this._sparkBurst * 0.55})`;
       ctx.lineWidth = 1.2;
@@ -1193,8 +1328,9 @@ export class Renderer {
       ctx.fillRect(0, 0, w, h);
     }
 
-    // Harsh → glitch / ash (density × quality)
-    if (this._glitch > 0.12) {
+    // Harsh → glitch / ash (density × quality; stripped in heavy quiet)
+    const _glGain = (this._style?.id === 'ember_wasteland' && !this._neutral) ? (this._heavyStorm ?? 1) : 1;
+    if (this._glitch * _glGain > 0.12) {
       ctx.save();
       ctx.globalAlpha = this._glitch * 0.45;
       const bars = this._artOn ? 0 : Math.floor(8 * this.quality);
@@ -1237,6 +1373,21 @@ export class Renderer {
     }
 
     if (!this._artOn) this.lighting.apply(ctx, w, h, light, directive?.palette, this.quality);
+    // style1: ONE full-frame grade for the whole track (painted + procedural worlds)
+    if (this._neutral) { // neutral grade: desaturated, even, no style hue (music still moves the plate light underneath)
+      ctx.save(); try { ctx.setTransform(1, 0, 0, 1, 0, 0); } catch (_) { /* soft */ }
+      ctx.globalCompositeOperation = 'saturation'; ctx.globalAlpha = 0.82; ctx.fillStyle = 'rgb(128,128,128)'; ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over'; const nv = ctx.createRadialGradient(w / 2, h * 0.5, Math.min(w, h) * 0.3, w / 2, h * 0.5, Math.max(w, h) * 0.75);
+      nv.addColorStop(0, 'rgba(8,8,10,0)'); nv.addColorStop(1, 'rgba(8,8,10,0.45)'); ctx.globalAlpha = 1; ctx.fillStyle = nv; ctx.fillRect(0, 0, w, h); ctx.restore();
+    } else if (this._style) { try { applyStyleGrade(ctx, w, h, this._style.grade, { painted: !!this._artOn, intensity: Math.min(1, Number(this._comp?.intensity ?? directive?.intensity ?? 0.5)) }); } catch (_) { /* soft */ } }
+    // style1/mood: composition layer — negative space, edge pressure, texture, sat/warmth/contrast, loud fracture
+    if (this._style && this._comp && !this._neutral) {
+      const _mc = getMotionComfort();
+      try { applyComposition(ctx, w, h, this._comp, { figX: this._sd?.lastX, t: now / 1000, reduceMotion: !!_mc.reduceMotion, quality: this.quality, beat: audio?.beat ? 1 : 0 }); } catch (_) { /* soft */ }
+      const C = this._comp;
+      artLog({ composition: { name: C.mood, look: C.look, variant: C.variant, mode: C.mode, source: C.source, figureU: this._sd?.lastX != null ? +(this._sd.lastX / w).toFixed(3) : null, emptyFrac: C.emptySpace, sat: C.saturation, warmth: C.warmth, contrast: C.contrast, texture: C.texture, chaos: +C.chaos.toFixed(2), maxElements: C.maxElements, fauna: C.fauna } });
+    }
+
 
     // Typography — scenic; clear sticky on lyricStickExpire / sectionChangeId
     const stickExpire = !!(directive?.lyricStickExpire);
@@ -1264,10 +1415,13 @@ export class Renderer {
       /* typography owns readability; beam already soft */
     }
     this.typography.update(phrase, wordIndex, directive, now, audio, lyricEmphasis);
-    this.typography.draw(ctx, w, h, emotion);
+    const _heavyPostMid = !this._neutral && this._style?.id === 'ember_wasteland';
+    if (!_heavyPostMid) this.typography.draw(ctx, w, h, emotion);
+    else this._pendingTypoDraw = () => this.typography.draw(ctx, w, h, emotion);
 
     // Cast AFTER typography — figures never under lyric wash; camera owns framing
     this._drawCast(ctx, w, h, directive, state);
+    this._pendingTypoDraw = null;
 
     if (directive?.sectionType === 'intro' && directive.theme && (audio?.energy || 0) < 0.25) {
       ctx.save();
@@ -1279,6 +1433,12 @@ export class Renderer {
       ctx.restore();
     }
 
+    // polish6: the one reveal — last neutral frame fades out over the locked look (~1s)
+    if (this._xfade && this._styleShownAt != null) {
+      const k = (now - this._styleShownAt) / XFADE_MS;
+      if (k >= 1) this._xfade = null;
+      else { ctx.save(); try { ctx.setTransform(1, 0, 0, 1, 0, 0); } catch (_) { /* soft */ } ctx.globalAlpha = 1 - k * k * (3 - 2 * k); ctx.drawImage(this._xfade, 0, 0, w, h); ctx.restore(); }
+    }
     // HOLD-0338 DEBUG HUD — call ONLY module drawDebugHudImpl (no this._drawDebugHud TypeError)
     try {
       drawDebugHudImpl(ctx, w, h, directive, audio);
@@ -1304,13 +1464,13 @@ export class Renderer {
     const FALLBACK = {
       ocean: ['misty_lake', 'storm'], ancient_ruins: ['cathedral_space', 'apocalyptic_warzone'], empty_highway: ['dark_sparse', 'storm'],
       reality_fracture: ['dream_clouds', 'red_void'], white_void: ['dream_clouds', 'red_void'], endless_staircase: ['dark_sparse', 'red_void'],
-      candy_happy: ['meadow_fauna', 'red_void'], country_porch: ['meadow_fauna', 'storm'], cozy_autumn: ['forest', 'storm'], snow: ['misty_lake', 'storm'],
+      candy_happy: ['meadow_fauna', 'red_void'], country_porch: ['country_porch', 'storm'], cozy_autumn: ['country_porch', 'storm'], snow: ['misty_lake', 'storm'],
       futuristic_city: ['rainy_city', 'metal_hall'], neon_highway: ['rainy_city', 'metal_hall'], industrial_tunnel: ['dark_sparse', 'metal_hall'],
       led_wall: ['rainy_city', 'metal_hall'], ambient_field: ['meadow_fauna', 'storm'], orchestral_hall: ['cathedral_space', 'metal_hall'],
       burning_desert: ['meadow_fauna', 'apocalyptic_warzone'], white: ['dream_clouds', 'red_void']
     };
     const id = String(preset || '');
-    const hard = !!(directive?.hardOnly || HARD_IDS.includes(id)); // director polarity only
+    const hard = !this._softClamp && !!(directive?.hardOnly || HARD_IDS.includes(id)); // director polarity only (never for a no-storm style)
     this._artHard = hard;
     let plate;
     if (this.art.has(id) || ART_WORLDS[id]) plate = id;
@@ -1319,9 +1479,53 @@ export class Renderer {
       plate = fb ? fb[hard ? 1 : 0] : null;
       if (!plate) { const pool = hard ? HARD : SOFT; let hsh = 0; for (const c of id) hsh = (hsh * 31 + c.charCodeAt(0)) % 997; plate = pool[hsh % pool.length]; }
     }
+    // fixmood2: a pinned style's world never falls through to another style's world, and never-listed plates are blocked
+    const S = this._style;
+    if (S) {
+      let pin = null; try { pin = pinnedWorld(S.id); } catch (_) { pin = null; }
+      if (pin && !S.pending && (this.art.has(pin) || ART_WORLDS[pin]) && !neverHas(S.kit, pin)) {
+        plate = pin;
+      } else if (plate && neverHas(S.kit, plate)) {
+        const alt = [pin, this._worldKeep, ...SOFT].find(p => p && !neverHas(S.kit, p) && (this.art.has(p) || ART_WORLDS[p]));
+        if (alt) { try { artLog({ plateNeverBlocked: plate, plateNeverAlt: alt }); } catch (_) { /* soft */ } plate = alt; }
+      }
+    }
     // proof hook for QA shoots: HUD preset vs plate on screen
-    try { globalThis.__LS_ART__ = { t, hud: directive?.preset || null, target: id, plate, shown: this.art.cur, dominant: this.art.dominant || this.art.cur, dip: !!this.art.dip, mix: this.art.mix, mapped: plate !== id, hard, hardOnly: !!directive?.hardOnly, agg: +(+(audio?.vibe?.aggression ?? 0) || 0).toFixed(2), lad: String(audio?.moment?.ladder || audio?.vibe?.moment?.ladder || audio?.vibe?.ladder || '') }; } catch (_) {}
+    try { artLog({ t, hud: directive?.preset || null, target: id, plate, shown: this.art.cur, dominant: this.art.dominant || this.art.cur, dip: !!this.art.dip, mix: this.art.mix, mapped: plate !== id, hard, hardOnly: !!directive?.hardOnly, agg: +(+(audio?.vibe?.aggression ?? 0) || 0).toFixed(2), lad: String(audio?.moment?.ladder || audio?.vibe?.moment?.ladder || audio?.vibe?.ladder || '') }); } catch (_) {}
     return plate;
+  }
+
+  /**
+   * fixmood2 (bot 1 mood2 P0): the plate stays on the latched style's world for the whole song.
+   * Source of Clegg's stormy sea: Scene/Worlds emitted preset 'storm' (cinematic/dreamlike family peak world) for the loud
+   * bridge/final chorus of a candy_pop track; ArtPlates followed it. Visual now clamps: Worlds' pinnedWorld(style) wins when
+   * set; otherwise a preset that matches the style's never-list is refused and the last good world is kept.
+   * Styles whose never-list forbids 'storm' also drop the hard/forbidPastoral polarity (no storm grade on Happy).
+   */
+  _clampWorld(d, now) {
+    const S = this._style;
+    if (!d || !S || S.pending) { this._softClamp = false; return d; }
+    this._softClamp = neverHas(S.kit, 'storm');
+    let pin = null; try { pin = pinnedWorld(S.id); } catch (_) { pin = null; }
+    const pre = d.preset ? String(d.preset) : null;
+    let to = pre, why = null;
+    if (pin && pre !== pin) { to = pin; why = 'pinned'; }
+    else if (S.id === 'ember_wasteland') {
+      // One location per song for Heavy (never switch storm <-> metal_hall mid-song; storm belongs to calm fallback only)
+      if (!this._worldKeep) {
+        const heavyBase = (pre && pre !== 'storm' && (this.art.has(pre) || ART_WORLDS[pre])) ? pre : 'metal_hall';
+        this._worldKeep = heavyBase;
+      }
+      if (pre !== this._worldKeep) { to = this._worldKeep; why = 'heavy_pin'; }
+    }
+    else if (pre && neverHas(S.kit, pre)) { to = this._worldKeep || pin || null; why = 'never'; }
+    if (to && !neverHas(S.kit, to)) this._worldKeep = to;
+    if (!why && !this._softClamp) return d;
+    if (why && to !== this._clampLast) { this._clampLast = to; try { artLog({ worldClamp: { style: S.id, from: pre, to, why, at: Math.round(now) } }); } catch (_) { /* soft */ } }
+    const out = { ...d };
+    if (why && to) { out.preset = to; if (out.world) out.world = to; }
+    if (this._softClamp) { out.hardOnly = false; out.hardLock = false; out.forbidPastoral = false; }
+    return out;
   }
 
   _drawDebugHud(ctx, w, h, directive, audio) {
@@ -1344,8 +1548,7 @@ export class Renderer {
       if (/dash|rain|needle|spark/.test(v)) ctx.setLineDash([6, 5]);
       else if (/double|echo|mirror|twin/.test(v)) ctx.lineWidth *= 1.35;
       else if (/glow|soft|wash|fog/.test(v)) {
-        ctx.shadowColor = 'rgba(255,255,255,0.55)';
-        ctx.shadowBlur = 12 + strength * 18;
+        ctx.lineWidth *= 1.5;
       } else if (/harsh|glitch|ash/.test(v)) ctx.setLineDash([2, 3, 6, 3]);
     }
     const cx = w * 0.5, cy = h * 0.35;
@@ -1714,6 +1917,7 @@ export class Renderer {
     // Characters-on OR cast present → always attempt paint (kind=none still falls through to silhouette)
     if (!this.showCharacters && !castRaw && !directive?.concept?.figure && !directive?.figure) return;
     // art5: over painted worlds the cast is the BAND — one performer per active audio role.
+    if (this._style || this._neutral) { try { this._drawStyleDreamer(ctx, w, h, directive, state); } catch (e) { artLog({ castError: String(e && e.message || e) }); } return; } // style1: one held character, reacts, kit around them
     if (this._artOn) { this._drawArtDreamer(ctx, w, h, directive, state); return; } // art6: dreamer in the world (art5 band ensemble retired)
     let list = kindNone ? [] : this._normalizeCastList(directive);
     // HOLD-2149: empty members / kind=none / Characters on → one large FG silhouette
@@ -1917,6 +2121,363 @@ export class Renderer {
   }
 
   /**
+   * style1 (CEO rule 2): ONE held character for the locked style that STANDS AND REACTS.
+   * - No traversal: anchored to one plate spot (moves only with the painting's pan, feet never slide).
+   *   Walk only when Scene stamps cast.action==='walk' WITH a reason AND locomotion !== false.
+   * - Pose from directive.reaction.verb (Scene) via VISUAL_STYLES[style].cast.moves; local Visual
+   *   triggers (lightning bolt drawn by ArtPlates, kit crows taking off) react within the same frame.
+   * - Gaze: head/torso turn toward the on-screen kit element the reaction names (lantern target,
+   *   doorway, streetlamp, landmark, crows/birds, beast, bolt), else reaction.gazeU/V on the plate.
+   * - Horror startles honoured at most kit.peakMax (2) per track; extra ones logged as suppressed.
+   * - Logs: __LS_ART__.castMove/castTrigger/castTriggerAt/castMoveAt/castLatencyMs/castLog/castOutfit/styleKitActive.
+   */
+  _drawStyleDreamer(ctx, w, h, directive, state) {
+    const NEU = !!this._neutral || !this._style;
+    const S = NEU ? NEUTRAL_STYLE : this._style, VS = S.VS, kit = S.kit || { elements: new Set(), peakMax: 2 }, grade = S.grade;
+    const CMP = NEU ? NEUTRAL_COMP : this._comp;
+    const t = Number(state?.t ?? 0) || 0, now = t * 1000;
+    const audio = state?.audio || {};
+    const art = this._artOn ? this.art.active() : null;
+    const G = art ? this.art.geo(art) : null;
+    const D = this._sd || (this._sd = { id: '__', x: null, au: null, a: 0, lastT: t, bph: 0, bpm: 110, move: 'stand', from: 'stand', mix: 1, gx: 0, gy: 0, verbKey: null, cur: null, boltSeen: -1, crowSeen: -1, startles: 0, suppressed: 0, moveAt: now, wph: 0 });
+    const dt = Math.max(0, Math.min(0.1, t - D.lastT)); D.lastT = t;
+    // tempo phase for sway / headbang / bounce
+    const bpm = Math.max(60, Math.min(180, Number(audio.bpm) || D.bpm)); D.bpm += (bpm - D.bpm) * Math.min(1, dt * 0.5);
+    let tempo = D.bpm; while (tempo > 135) tempo /= 2;
+    const slow = S.id === 'horror' || S.id === 'sad';
+    const qd = Math.PI * (S.id === 'ember_wasteland' || S.id === 'candy_pop' ? 1 : 0.5);
+    D.bph += dt * (slow ? 0.35 : tempo / 60) * qd;
+    if (audio.beat && !slow) D.bph += (Math.round(D.bph / qd) * qd - D.bph) * 0.3;
+    // ---- placement (anchored) ----
+    let H, gy, x;
+    const cast = directive?.cast && typeof directive.cast === 'object' && !Array.isArray(directive.cast) ? directive.cast : {};
+    const R = directive?.reaction || cast.reaction || null;
+    const noLoco = R?.locomotion === false || cast.locomotion === false;
+    const walkReason = cast.walkReason || cast.reason || R?.walkReason || null;
+    const walkOk = !noLoco && (cast.action === 'walk' || R?.verb === 'walk') && !!walkReason;
+    if (G && this.art.toScreen(art, 0, 0)) {
+      const dh = this.art.plateH(art);
+      H = Math.max(h * 0.06, G.fh * dh * (CMP?.scale || 1)); // HOLD-1345 human-scale floor; mood scale (sad small, heavy big)
+      const halfW = H * 0.22;
+      const valid = (sx) => {
+        if (sx < w * 0.1 || sx > w * 0.9) return false;
+        const u = this.art.plateU(art, sx); if (u == null || u < G.walk[0] || u > G.walk[1]) return false;
+        const gv = this.art.groundV(art, u), top = gv - (H * 1.15) / dh;
+        if (S.id === 'sad' || S.id === 'horror') for (const f of G.focal) { const fx = this.art.toScreen(art, f[0], f[1])[0], fr = f[2] * this.art.map[art].dw; if ((f[1] + f[2] * 0.6) > top && (f[1] - f[2] * 0.6) < gv && Math.abs(sx - fx) < fr + halfW) return false; }
+        return true;
+      };
+      const fu = Math.max(0.12, Math.min(0.88, Number(CMP?.focalU ?? 0.32)));
+      // polish6 item 1: pick the spot nearest where the figure already stands (or the composition focal on first show)
+      const respot = () => {
+        const c0 = D.lastX != null && D.seen && !D.forceFocal ? D.lastX / w : fu; D.forceFocal = false;
+        const c = [0, -0.04, 0.04, -0.08, 0.08, 0.12, -0.12, 0.18, -0.18, 0.3, -0.3].map(d => (c0 + d) * w).find(valid);
+        D.au = c != null ? this.art.plateU(art, c) : null; D.keepC = c != null ? c / w : null;
+      };
+      if (D.id !== art) { // new world (same style): stay where we are in the frame, ease feet onto the new ground — no fade, no walk-in
+        if (D.seen && D.lastX != null && D.lastGy != null) { D.blendFrom = [D.lastX, D.lastGy]; D.blendP = 0; }
+        D.id = art; D.fade = false; respot();
+      }
+      if (D.au == null) respot();
+      // polish6 item 1: the plate pans UNDER the figure, never the figure off the plate. ArtPlates soft-clamps its pan so the
+      // anchor stays inside a band around where it was placed (sad/horror held tight, others looser). No fade-out / re-spot cut.
+      if (D.au != null && D.keepC != null) {
+        const band = (S.id === 'sad' || S.id === 'horror') ? 0.07 : 0.16;
+        this.art.keep = { id: art, u: D.au, lo: Math.max(0.08, D.keepC - band), hi: Math.min(0.92, D.keepC + band) };
+      } else this.art.keep = null;
+      if (D.au != null) {
+        if (walkOk) D.au = Math.max(G.walk[0], Math.min(G.walk[1], D.au + dt * 0.008 * (D.walkDir || 1)));
+        x = this.art.toScreen(art, D.au, 0)[0];
+        gy = this.art.toScreen(art, 0, this.art.groundV(art, Math.max(G.walk[0], Math.min(G.walk[1], D.au))))[1];
+      }
+    }
+    if (x == null) { // procedural world (or plate without a spot): same third, same scale
+      if (D.id !== '__proc') { if (D.seen && D.lastX != null && D.lastGy != null) { D.blendFrom = [D.lastX, D.lastGy]; D.blendP = 0; } D.id = '__proc'; }
+      this.art.keep = null;
+      H = Math.max(h * 0.06, h * 0.15 * (CMP?.scale || 1)); gy = h * 0.84; x = w * Math.max(0.12, Math.min(0.88, Number(CMP?.focalU ?? 0.32)));
+    }
+    if (!D.blendFrom && D.seen && D.lastX != null && Math.abs(x - D.lastX) > w * 0.04) { D.blendFrom = [D.lastX, D.lastGy ?? gy]; D.blendP = 0; }
+    if (D.blendFrom) { // eased hand-off between worlds / keep-clamp (1s, dt-capped smoothstep) instead of a jump cut
+      D.blendP = Math.min(1, (D.blendP || 0) + Math.max(0.016, Math.min(0.05, dt)) / 1.0);
+      const k = D.blendP, sm = k * k * (3 - 2 * k);
+      x = D.blendFrom[0] + (x - D.blendFrom[0]) * sm; gy = D.blendFrom[1] + (gy - D.blendFrom[1]) * sm;
+      if (k >= 1) D.blendFrom = null;
+    }
+    D.seen = true; D.lastGy = gy;
+    { const ox = D.lastX; if (ox != null && Math.abs(x - ox) > w * 0.06) { D.jumps = (D.jumps || 0) + 1; } }
+    D.a += ((D.fade ? 0 : 1) - D.a) * (1 - Math.exp(-dt / (D.fade ? 0.35 : 0.9)));
+    const side = x < w / 2 ? 1 : -1;
+    D.lastX = x;
+    this.kitPainter.layout({ w, h, H, fx: x, gy, side });
+    const comp = CMP || null, CH = comp?.chaos || 0;
+    const allowed = capKit(S.id, kit, comp);
+    // ---- reaction selection ----
+    const T = this.kitPainter.targets || {};
+    const peakMax = Number.isFinite(kit.peakMax) ? kit.peakMax : 2;
+    let cand = null;
+    if (R && R.verb) {
+      const key = `${R.verb}|${R.since ?? ''}|${R.target ?? ''}`;
+      if (key !== D.verbKey) { D.verbKey = key; cand = { verb: R.verb, target: R.target || null, why: R.why || null, since: Number.isFinite(+R.since) ? +R.since : now, strength: +R.strength || 0.5, gazeU: R.gazeU, gazeV: R.gazeV, src: 'scene' }; }
+    }
+    // local Visual triggers (same-frame): lightning drawn by ArtPlates, crows lifting off in the kit
+    const A = this.art.ag || {};
+    const boltOk = /horror|cinematic|ember_wasteland/.test(S.id) && this.art.allow?.accent?.has('lightning') && (S.id !== 'ember_wasteland' || (this._heavyStorm ?? 1) > 0.35);
+    if (boltOk && A.boltAt > D.boltSeen && t - A.boltAt < 0.5 && A.bolt && A.bolt.length) {
+      D.boltSeen = A.boltAt; const end = A.bolt[A.bolt.length - 1];
+      cand = { verb: S.id === 'horror' ? 'startle' : 'turn', target: 'lightning', why: 'lightning', since: A.boltAt * 1000, strength: 0.85, pos: end, src: 'visual' };
+    }
+    const ce = this.kitPainter.st?.crowEvent;
+    if (allowed.has('crows') && ce != null && ce > D.crowSeen) { D.crowSeen = ce; if (!cand || cand.strength < 0.8) cand = { verb: S.id === 'horror' ? 'freeze' : 'turn', target: 'crows', why: 'bird', since: ce * 1000, strength: 0.8, src: 'visual' }; }
+    if (walkOk) cand = cand && cand.verb !== 'idle_sway' ? cand : (D.cur?.verb === 'walk' ? null : { verb: 'walk', target: walkReason, why: 'walk', since: now, strength: 0.4, src: 'scene' });
+    if (cand) {
+      const busy = D.cur && now < D.cur.until && !IDLE_VERBS.has(D.cur.verb);
+      // horror startle cap (per track): first peakMax honoured, the rest suppressed + logged
+      const startle = S.id === 'horror' && (cand.verb === 'startle' || (/^(turn|brace|step_back|freeze)$/.test(cand.verb) && (cand.strength >= 0.8 || /flash|collapse|blackout|lightning/.test(String(cand.why || '')))));
+      if (startle) {
+        if (D.startles >= Math.max(1, peakMax)) { D.suppressed++; this._pushCastLog({ t: now, move: 'gaze', trigger: triggerOf(cand.why, cand.target, cand.verb), triggerAt: cand.since, latencyMs: null, suppressed: true }); cand = { ...cand, verb: 'slow_head_turn', strength: 0.4 }; }
+        else D.startles++;
+      }
+      if (!busy || cand.strength >= (D.cur?.strength || 0) + 0.05 || (cand.src === 'scene' && !IDLE_VERBS.has(cand.verb))) {
+        const hold = { turn: 1.8, brace: 1.6, raise_arms: 2.6, step_back: 2.0, look_up: 2.4, look_toward: 3.0, walk: 4, idle_sway: 0.5, startle: 1.4, freeze: 2.2, slow_head_turn: 2.6, lift_head: 3, raise_fists: 2.4 }[cand.verb] || 2;
+        D.cur = { ...cand, until: now + hold * 1000 };
+      }
+    }
+    if (!D.cur || (now > D.cur.until && D.cur.verb !== 'walk') || (D.cur.verb === 'walk' && !walkOk)) D.cur = { verb: (R && IDLE_VERBS.has(R.verb)) ? R.verb : 'idle_sway', target: null, why: 'wind', since: D.cur?.verb === 'idle_sway' ? D.cur.since : now, strength: 0.3, until: now + 500, src: 'visual' };
+    const verb = D.cur.verb;
+    let move = (VS.cast.moves[verb] || VS.cast.moves.idle_sway);
+    if (verb === 'walk') move = 'walk';
+    if (!NEU && comp?.cozy && verb !== 'walk') move = /look_up|raise|point|lift/.test(verb) ? 'mug_look' : 'mug'; // cozy host styles too
+    if (!NEU && S.id === 'horror' && CH > 0.35 && IDLE_VERBS.has(verb)) move = 'lift_lantern'; // loud horror: lantern thrust toward the dark, reads in a still
+    if (!NEU && S.id === 'ember_wasteland' && CH > 0.35) { if (IDLE_VERBS.has(verb) || move === 'stand' || move === 'headbang') move = (this.kitPainter.st?.lungeAt != null && t - this.kitPainter.st.lungeAt < 1.4) ? 'raise_fists' : 'roar'; } // loud heavy: always roar/raise_fists, never arms down
+    const FR = (!NEU && S.id === 'candy_pop') ? this._candyFriendsUpdate(directive, t) : null;
+    if (FR && FR.on && IDLE_VERBS.has(verb)) move = FR.move; // chorus: the lead dances the same step as the friends
+    // sad letter: one hand, only when the lyric is about the person
+    const letter = !!(directive?.lyricAboutPerson || directive?.aboutPerson || directive?.semantic?.aboutPerson || directive?.lyricPerson);
+    if (S.id === 'sad' && letter && (move === 'pockets')) move = 'lantern';
+    const letterOn = S.id === 'sad' && (letter || verb === 'hold_memory'); // one hand raised low in front holding the letter
+    // ---- gaze target: the on-screen element the reaction is about ----
+    const headX = x, headY = gy - H * 0.92;
+    const tg = String(D.cur.target || '').toLowerCase();
+    let pos = D.cur.pos || null, gsrc = pos ? 'event' : null;
+    const pick = (...ks) => { for (const k of ks) if (T[k]) return T[k]; return null; };
+    if (!pos) {
+      if (/bird|crow/.test(tg)) { pos = pick('crows', 'birds'); if (!pos && Number.isFinite(+D.cur.gazeU) && art) { pos = this.art.toScreen(art, +D.cur.gazeU, +D.cur.gazeV); if (allowed.has('crows') || allowed.has('birds')) this.kitPainter.spawnAt(allowed.has('crows') ? 'crows' : 'birds', pos[0], pos[1], t); } }
+      else if (/fire|beast|furnace|void/.test(tg)) pos = pick('beast');
+      else if (/lamp|light|window|warm|shaft|sun|altar/.test(tg)) pos = pick('streetlamp', 'beams', 'sun', 'lantern');
+      else if (/landmark|horizon|vanishing|skyline|stars|monolith/.test(tg)) pos = pick('landmark');
+      else if (/door|sound|behind/.test(tg)) pos = pick('doorway', 'far_figure');
+      if (!pos) {
+        const up = UP_VERBS.has(verb) || verb === 'shield_eyes';
+        const byStyle = {
+          horror: up ? ['crows', 'doorway'] : ['doorway', 'far_figure'],
+          sad: (verb === 'lift_head' || verb === 'look_up') ? ['streetlamp'] : ['bench', 'puddles'],
+          cinematic: up ? ['beams', 'landmark'] : ['landmark', 'birds'],
+          candy_pop: ['sun', 'balloons'], ember_wasteland: ['beast']
+        }[S.id] || [];
+        pos = pick(...byStyle); gsrc = pos ? 'kit' : null;
+      } else gsrc = 'kit';
+      if (!pos && Number.isFinite(+D.cur.gazeU) && art) { pos = this.art.toScreen(art, +D.cur.gazeU, +D.cur.gazeV); gsrc = 'scene'; }
+      if (!pos) { pos = [w * 0.5, h * 0.35]; gsrc = 'default'; }
+    }
+    let gx = Math.max(-1, Math.min(1, (pos[0] - headX) / (w * 0.22)));
+    let gyv = Math.max(-1, Math.min(1, (headY - pos[1]) / (h * 0.3)));
+    if (S.id === 'sad' && verb !== 'lift_head' && verb !== 'look_up' && verb !== 'raise_arms') gyv = Math.min(gyv, -0.5); // head low (gazes at the empty bench / puddle)
+    if (S.id === 'sad' && (verb === 'lift_head' || verb === 'look_up' || verb === 'raise_arms')) gyv = Math.max(gyv, 0.7);   // lift head into the soft light
+    const kG = 1 - Math.exp(-dt / (IDLE_VERBS.has(verb) ? 0.9 : verb === 'slow_head_turn' ? 0.8 : 0.25)); // reactions turn fast, idle drifts
+    D.gx += (gx - D.gx) * kG; D.gy += (gyv - D.gy) * kG;
+    // ---- pose change (eased; castMoveAt = reaction pose start) ----
+    if (move !== D.move) {
+      D.from = D.move; D.move = move; D.mix = 0; D.moveAt = now;
+      const lm = MOVE_LOG[verb] || 'idle', trig = triggerOf(D.cur.why, D.cur.target, verb);
+      const lat = Math.max(0, Math.round(now - (Number.isFinite(D.cur.since) ? D.cur.since : now)));
+      D.logMove = lm; D.logTrig = trig; D.trigAt = D.cur.since; D.lat = lat;
+      this._pushCastLog({ t: now, move: lm, trigger: trig, triggerAt: Math.round(D.cur.since), latencyMs: lat, pose: move, src: D.cur.src });
+    } else if (D.logMove == null) { D.logMove = MOVE_LOG[verb] || 'idle'; D.logTrig = triggerOf(D.cur.why, D.cur.target, verb); D.trigAt = D.cur.since; D.lat = 0; }
+    D.mix = Math.min(1, D.mix + dt / (IDLE_VERBS.has(verb) ? 0.9 : 0.35));
+    // ---- draw: kit midground → figure → kit foreground ----
+    const flashCtx = (col, a) => { if (!this._flashGate(now)) return; ctx.save(); try { ctx.setTransform(1, 0, 0, 1, 0, 0); } catch (_) { /* soft */ } ctx.globalAlpha = 1; ctx.fillStyle = col + Math.min(0.25, a) + ')'; ctx.fillRect(0, 0, w, h); ctx.restore(); };
+    const kitInfo = { reduceMotion: !!getMotionComfort().reduceMotion, xf: this._tiltXfNow || null, style: S.id, kit, allowed, chaos: CH, stormGain: this._heavyStorm ?? 1, motion: comp?.motionMul != null ? Math.max(0.3, Math.min(1.6, comp.motionMul * 1.5)) : 1, warmLight: comp?.warmLight, flashCtx, grade, t, audio, L: { w, h, H, fx: x, gy, side }, quality: this.quality, swell: S.id === 'sad' && (verb === 'lift_head' || verb === 'look_toward_light' || verb === 'look_up') ? 1 : 0, startle: S.id === 'horror' && (verb === 'startle' || (/freeze|step_back/.test(verb) && D.cur.strength >= 0.8)), letter: letterOn };
+    if (!NEU) try { this.kitPainter.drawMid(ctx, kitInfo); } catch (e) { artLog({ kitError: String(e && e.message || e) }); }
+    if (!NEU && S.id === 'ember_wasteland' && this._pendingTypoDraw) {
+      if (this.typography?.currentText && (this.typography?.opacity || 0) > 0.05) { // subtle dark top scrim band behind lyrics over the beast
+        if (!this._emberScrimSpr) {
+          const sc = document.createElement('canvas'); sc.width = 1; sc.height = 64;
+          const sg2 = sc.getContext('2d'), gr = sg2.createLinearGradient(0, 0, 0, 64);
+          gr.addColorStop(0, 'rgba(4,2,3,0.58)'); gr.addColorStop(0.65, 'rgba(4,2,3,0.34)'); gr.addColorStop(1, 'rgba(4,2,3,0)');
+          sg2.fillStyle = gr; sg2.fillRect(0, 0, 1, 64); this._emberScrimSpr = sc;
+        }
+        ctx.save(); try { ctx.setTransform(1, 0, 0, 1, 0, 0); } catch (_) {}
+        ctx.drawImage(this._emberScrimSpr, 0, 0, w, h * 0.25); ctx.restore();
+      }
+      try { this._pendingTypoDraw(); } catch (_) {}
+    }
+    const voc = this.art.ag?.lv?.vocals || this.kitPainter.lv?.v || 0;
+    const swayAmp = Math.max(0.1, Math.min(1, (Number(R?.sway) || 0.3) * 1.6)) * (VS.cast.swayMul ?? 0.5) * (1 + CH * 0.8) * (comp?.motionMul != null ? Math.max(0.25, Math.min(1.5, comp.motionMul * 1.6)) : 1);
+    const react = { gx: D.gx, gy: D.gy, hunch: VS.cast.hunch * (gyv > 0.3 ? 0.2 : 1), swayMul: swayAmp, hood: !!VS.cast.hood, coat: VS.cast.coat, prop: VS.cast.prop === 'staff' ? 'staff' : null,
+      wind: S.id === 'cinematic' ? 0.35 + 0.65 * voc : S.id === 'sad' ? 0.15 : 0.1, body: VS.cast.bright ? '#c94a8c' : (S.id === 'cozy' ? '#2a1a14' : null),
+      blanket: !NEU && (!!VS.cast.blanket || !!comp?.cozy), mug: !NEU && (!!VS.cast.mug || !!comp?.cozy) };
+    if (verb === 'walk') { D.wph += dt * 3.2; }
+    if (FR) this._drawCandyFriends(ctx, w, h, FR, { x, gy, H, side, t, bph: D.bph, alpha: D.a, rim: `rgba(${grade.rim},0.95)`, energy: Math.min(1, Number(audio.energy) || 0) });
+    const dr = drawPerformer(ctx, {
+      x, baseY: gy, heightPx: H, t, i: 21, opacity: 0.96 * D.a, energy: Math.min(1, Number(audio.energy) || 0) * (slow ? 0.4 : 0.8), hard: S.id === 'ember_wasteland',
+      look: 'wanderer', rim: (!NEU && S.id === 'ember_wasteland') ? 'rgba(255,168,76,0.98)' : `rgba(${grade.rim},0.95)`, lightSide: side, beatPh: verb === 'walk' ? D.wph : D.bph, move, moveFrom: D.from, moveMix: D.mix,
+      facing: side, glow: (!NEU && S.id === 'ember_wasteland') ? Math.max(0.35, voc, this.kitPainter.lv?.x || 0, CH * 0.65) : voc * 0.5, react
+    });
+    if (!NEU) try { this.kitPainter.drawFg(ctx, { ...kitInfo, hands: dr?.hands || null }); } catch (e) { artLog({ kitError: String(e && e.message || e) }); }
+    this._figureAnchor = { x: dr.fx, y: (dr.headY + dr.chestY) * 0.5 };
+    this._dreamFeet = [x, gy];
+    const outfit = VS.cast.outfit + (S.kit?.figure?.costume ? `|${S.kit.figure.costume}` : '');
+    globalThis.__LS_CAST__ = { n: 1, move: D.move, walking: verb === 'walk', H: Math.round(H), style: S.id, extras: 0, row: 1, moves: [D.move] };
+    artLog({
+      castMove: D.logMove, castTrigger: D.logTrig, castTriggerAt: Math.round(D.trigAt), castMoveAt: Math.round(D.moveAt), castLatencyMs: D.lat,
+      castPose: D.move, castVerb: verb, castWalking: verb === 'walk', castWalkReason: verb === 'walk' ? walkReason : null, castLocomotion: !noLoco,
+      castGaze: { x: Math.round(pos[0]), y: Math.round(pos[1]), target: D.cur.target || null, src: gsrc }, castOutfit: outfit,
+      styleKitActive: this.kitPainter.active.slice(), kitTargets: Object.fromEntries(Object.entries(this.kitPainter.targets || {}).map(([k, v]) => [k, [Math.round(v[0]), Math.round(v[1])]])),
+      startleCount: D.startles, startleSuppressed: D.suppressed, castNeutral: NEU, castJumps: D.jumps || 0, ...(NEU ? {} : { styleLock: S.id, styleSource: S.source, styleLatchedAt: S.latchedAt })
+    });
+  }
+
+  /**
+   * polish6 item 3: horizon tilt. Reads composition.horizonTilt ?? composition.tilt (resolveComposition → comp.tilt).
+   * UNITS: degrees (Worlds/Scene emit e.g. 4 for loud Sad; Camera reads degrees too). A small NON-integer |v| < 0.2 is taken
+   * as radians (0.07 → 4.0°). Clamped to ±8°. Eased (τ 0.6s) so quiet→loud leans in instead of snapping. Pivot = figure feet.
+   * Returns a DOMMatrix (screen space) or null when level. Overscan: the smallest zoom (≤1.35) that keeps the rotated plate
+   * covering the whole frame, computed against the plate rect (uses the plate's spare width before zooming).
+   */
+  _worldTiltXf(w, h, now) {
+    const raw = Number(this._comp?.tilt) || 0;
+    let deg = (raw !== 0 && Math.abs(raw) < 0.2 && !Number.isInteger(raw)) ? raw * 180 / Math.PI : raw;
+    deg = Math.max(-8, Math.min(8, deg));
+    if (this._styleShownAt == null || !this._style) deg = 0;
+    const dt = Math.max(0, Math.min(0.1, (now - (this._tiltT ?? now)) / 1000)); this._tiltT = now;
+    this._tiltA = (this._tiltA || 0) + (deg - (this._tiltA || 0)) * (1 - Math.exp(-dt / 0.6));
+    const a = this._tiltA;
+    if (Math.abs(a) < 0.05) { if (this._tiltLogged !== 0) { this._tiltLogged = 0; artLog({ tiltDeg: 0, tiltTarget: +deg.toFixed(2), tiltRaw: raw }); } return null; }
+    const px = this._sd?.lastX ?? w * (this._comp?.focalU ?? 0.5), py = this._sd?.lastGy ?? h * 0.8;
+    const m = this.art.map?.[this.art.cur] || null;
+    const rx0 = m ? m.x : 0, ry0 = m ? m.y : 0, rx1 = m ? m.x + m.dw : w, ry1 = m ? m.y + m.dh : h;
+    const th = -a * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th);
+    let sc = 1;
+    for (; sc < 1.35; sc += 0.01) {
+      let ok = true;
+      for (const [cx, cy] of [[0, 0], [w, 0], [0, h], [w, h]]) { const dx = (cx - px) / sc, dy = (cy - py) / sc; const qx = px + dx * c - dy * sn, qy = py + dx * sn + dy * c; if (qx < rx0 + 1 || qx > rx1 - 1 || qy < ry0 + 1 || qy > ry1 - 1) { ok = false; break; } }
+      if (ok) break;
+    }
+    const r = +a.toFixed(1);
+    if (this._tiltLogged !== r) { this._tiltLogged = r; artLog({ tiltDeg: r, tiltTarget: +deg.toFixed(2), tiltRaw: raw, tiltScale: +sc.toFixed(2), tiltPivot: [Math.round(px), Math.round(py)] }); }
+    return new DOMMatrix().translate(px, py).rotate(a).scale(sc).translate(-px, -py);
+  }
+
+  /**
+   * polish6 item 4: Candy chorus friends. Scene's directive.sectionType ('chorus' — also 'drop'/'hook') turns them on after
+   * 0.4s of chorus; 2–3 friends enter staggered (0.35s apart) rising out of a crouch beside the lead (no walking in), dance
+   * the SAME step on the SAME beat phase as the lead (step changes every bar: bounce → clap → armsup → wave), and after the
+   * chorus has been gone 1s they wave and sink/fade out staggered. Logged as __LS_ART__.candyFriends.
+   */
+  _candyFriendsUpdate(directive, t) {
+    const sec = String(directive?.sectionType || directive?.section || '').toLowerCase();
+    const chorus = /chorus|drop|hook/.test(sec);
+    const F = this._friends || (this._friends = { on: false, since: -99, offAt: -99, seen: null, last: -99, n: 0 });
+    if (chorus) { if (F.seen == null) F.seen = t; F.last = t; if (!F.on && t - F.seen > 0.4) { F.on = true; F.since = t; F.n = (F.n || 0) + 1; artLog({ candyFriends: { on: true, at: Math.round(t * 1000), entries: F.n } }); } }
+    else { F.seen = null; if (F.on && t - F.last > 1.0) { F.on = false; F.offAt = t; artLog({ candyFriends: { on: false, at: Math.round(t * 1000), entries: F.n } }); } }
+    const bph = this._sd?.bph || 0, bar = Math.floor(bph / (Math.PI * 4));
+    F.move = ['bounce', 'clap', 'armsup', 'wave'][((bar % 4) + 4) % 4];
+    return F;
+  }
+
+  _drawCandyFriends(ctx, w, h, F, o) {
+    const { x, gy, H, side, t } = o;
+    const sm = (k) => { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
+    const slots = [
+      { dx: 0.34, sc: 0.74, dy: -0.07, i: 24, look: 'rhythm', body: '#7a5cd6', back: true },
+      { dx: -0.64, sc: 0.9, dy: -0.02, i: 22, look: 'dancer', body: '#3f9fd0' },
+      { dx: 0.64, sc: 0.9, dy: -0.02, i: 23, look: 'dancer', body: '#e09a2e' }
+    ];
+    let shown = 0;
+    for (let k = 0; k < slots.length; k++) {
+      const sl = slots[k], order = sl.back ? 2 : k - 1; // flankers first, the back friend last
+      let a, rise = 0, move = F.move;
+      if (F.on) { const e = sm((t - F.since - order * 0.35) / 0.6); a = e; rise = 1 - e; }
+      else { const e = sm((t - F.offAt - order * 0.25) / 0.8); a = 1 - e; rise = e * 0.6; if (e > 0 && e < 1) move = 'wave'; }
+      if (a <= 0.01) continue;
+      const fx = x + sl.dx * H * (sl.back ? 1 : 1) * (side > 0 ? 1 : -1) * (sl.back ? 1 : 1);
+      if (fx < w * 0.07 || fx > w * 0.93) continue;
+      const hop = F.on ? Math.max(0, Math.sin(Math.min(1, (t - F.since - order * 0.35) / 0.6) * Math.PI)) * H * 0.05 : 0;
+      try {
+        drawPerformer(ctx, { x: fx, baseY: gy + sl.dy * H + rise * H * 0.1 - hop, heightPx: H * sl.sc * (1 - 0.12 * rise), t, i: sl.i, opacity: 0.94 * a * (o.alpha ?? 1),
+          energy: o.energy * 0.8, hard: false, look: sl.look, rim: o.rim, lightSide: side, beatPh: o.bph, move, facing: 1,
+          react: { gx: (x - fx) / (w * 0.5), gy: 0.15, hunch: 0, swayMul: 1, body: sl.body } });
+        shown++;
+      } catch (_) { /* soft */ }
+    }
+    if (shown !== this._friendsShown) { this._friendsShown = shown; artLog({ candyFriendsShown: shown }); }
+  }
+
+  /** polish6: true while Scene's stylePending holds the look open (living neutral scene). Latches styleShownAt once per track. */
+  _neutralGate(directive, now, ctx, w, h) {
+    if (this._styleShownAt != null) return false;
+    if (this._prerollStart == null) this._prerollStart = now;
+    const S = this._style, pend = !!(directive?.neutralHold || directive?.stylePending || S?.pending);
+    const waited = now - this._prerollStart;
+    if (S && (!pend || waited > 25000)) { // latched (or Scene never settles: reveal after 25s rather than hang)
+      const wasNeutral = !!this._neutralSeen;
+      this._styleShownAt = now; this._styleShownId = S.id;
+      if (wasNeutral) { // snapshot the last neutral frame for the single crossfade
+        try { const c = this._xfadeCanvas || (this._xfadeCanvas = document.createElement('canvas')); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } const g = c.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(ctx.canvas, 0, 0); this._xfade = c; } catch (_) { this._xfade = null; }
+      }
+      this._applyStyleCfg(S);
+      try { this.kitPainter.reset(); } catch (_) { /* soft */ }
+      const D = this._sd; if (D) { if (D.lastX != null && D.lastGy != null) { D.blendFrom = [D.lastX, D.lastGy]; D.blendP = 0; } D.au = null; D.forceFocal = true; }
+      artLog({ styleShownAt: Math.round(now), styleShown: S.id, neutralMs: Math.round(waited), neutralTimedOut: pend, neutral: false, revealXfadeMs: wasNeutral ? XFADE_MS : 0 });
+      return false;
+    }
+    if (!S && !pend && waited > 2500) return false; // legacy path with no style at all
+    if (!this._neutralSeen) { this._neutralSeen = true; artLog({ neutral: true, neutralStartedAt: Math.round(now) }); }
+    if (this.art) { this.art.allow = { accent: new Set(), birds: false }; this.art.liftColor = '#e6e6e8'; this.art.panSpan = 90; }
+    return true;
+  }
+
+  /** style-specific ArtPlates / typography / lighting config for the locked look (also re-applied at the neutral → style reveal). */
+  _applyStyleCfg(S) {
+    if (!S) return;
+    const id = S.id, grade = S.grade;
+    if (this.typography) this.typography.styleTypo = S.VS.typo;
+    if (this.lighting) this.lighting.styleColors = S.VS.light;
+    if (this.art) {
+      const ACC = { horror: ['lightning', 'lamp'], sad: ['lamp'], cinematic: ['lightning', 'rays'], candy_pop: [], ember_wasteland: ['lightning', 'flare'] };
+      this.art.allow = { accent: new Set(ACC[id] || []), birds: false };
+      this.art.never = (n) => neverHas(S.kit, n); // fixmood2: plate fx / accents obey the style's never-list
+      this.art.liftColor = `rgb(${grade.key})`;
+      this.art.panSpan = { sad: 160, horror: 140, cozy: 120, cinematic: 90, candy_pop: 40, ember_wasteland: 36 }[id] || null;
+    }
+  }
+
+  /** polish6: every style id that ever reached the screen this track (must stay length 1). */
+  _noteDrawn(id) {
+    const L = this._drawnStyles || (this._drawnStyles = []);
+    if (L.includes(id)) return;
+    L.push(id);
+    artLog({ stylesDrawn: L.slice(), styleDrawnNonFinal: L.length > 1 });
+  }
+
+  /** Photosensitivity: ≤3 full-frame flashes per second, none when the user mutes white-outs. */
+  _flashGate(now) {
+    const c = getMotionComfort();
+    if (c.muteWhiteOut || c.reduceMotion) return false;
+    const F = this._flashTimes || (this._flashTimes = []);
+    while (F.length && now - F[0] > 1000) F.shift();
+    if (F.length >= (c.lessFlash ? 1 : 3)) return false;
+    F.push(now); return true;
+  }
+
+  _pushCastLog(e) {
+    try {
+      const A = globalThis.__LS_ART__ || (globalThis.__LS_ART__ = {});
+      const L = Array.isArray(A.castLog) ? A.castLog : (A.castLog = []);
+      L.push(e); if (L.length > 200) L.splice(0, L.length - 200);
+    } catch (_) { /* soft */ }
+  }
+
+  /**
    * art6 (QA-0313): a dreamer INSIDE the painting, not a band in front of it.
    * - 0–1 small figure (scaled to the world: WORLD_GEO.fh of the plate height), seen from behind
    *   or side-on, on the painting's ground line, off-centre and never over a focal point.
@@ -1971,9 +2532,11 @@ export class Renderer {
     // two modes: 'anchor' = standing/dancing at a fixed spot IN the painting (moves with the pan);
     // 'track' = walking through the world while the camera tracks them (screen-fixed, side-on).
     const vx = this.art.panVx(id);
+    const noLoco = directive?.reaction?.locomotion === false || directive?.cast?.locomotion === false; // style1
+    if (noLoco && D.mode !== 'anchor') { if (D.tx == null || !valid(D.tx)) D.tx = cands.find(valid) ?? null; if (D.tx != null) { D.x = D.tx; D.mode = 'anchor'; D.au = this.art.plateU(id, D.x); } }
     const earnedNow = !hard && (chorus || D.eSlow > 0.42) && energy > 0.25;
     // hard: alternate ~12s walking through the destruction with ~12s standing defiant in it
-    const wantAnchor = earnedNow || Math.abs(vx) < w * 0.012 || (hard && (Math.floor((t + D.visit * 5) / 12) % 2 === 0 || D.eSlow > 0.62));
+    const wantAnchor = noLoco || earnedNow || Math.abs(vx) < w * 0.012 || (hard && (Math.floor((t + D.visit * 5) / 12) % 2 === 0 || D.eSlow > 0.62));
     if (D.mode === 'anchor') {
       const ax = this.art.toScreen(id, D.au, 0)[0];
       if (!valid(ax) || !wantAnchor) { D.mode = 'track'; D.x = ax; D.tx = valid(ax) ? ax : (cands.find(valid) ?? null); }
@@ -1987,7 +2550,7 @@ export class Renderer {
     const visible = D.tx != null;
     D.a += ((visible ? 1 : 0) - D.a) * (1 - Math.exp(-dt / (visible ? 0.9 : 0.4)));
     const respot = D.mode !== 'anchor' && D.x != null && D.tx != null ? D.tx - D.x : 0;
-    const walking = visible && D.mode !== 'anchor' && (Math.abs(vx) > w * 0.012 || Math.abs(respot) > w * 0.03);
+    const walking = !noLoco && visible && D.mode !== 'anchor' && (Math.abs(vx) > w * 0.012 || Math.abs(respot) > w * 0.03);
     if (walking) D.facing = Math.abs(respot) > w * 0.03 ? Math.sign(respot) : -Math.sign(vx);
     const u = 0.84 * H / 100 / 0.84; // px per pose unit
     const walkSpeed = Math.min(60, Math.abs(vx) + Math.abs(respot) * 0.6);

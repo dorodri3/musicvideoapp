@@ -1,59 +1,137 @@
 /**
- * CameraSystem — character-centric MV/film craft (MUSIC-BRIEF camera slice).
+ * CameraSystem — character-centric MV/film craft (CEO Direction Nov 24 2026).
  *
- * Contract (MUSIC-BRIEF-20260924-2118 supersedes/tightens 2115;
- *           MUSIC-BRIEF-20260924-2122 psych + Scene Director cast framing):
- * 1. Always crosshair the human (Fury Road) THROUGH kick shake / drop —
- *    punch overlays center; never throws silhouette off LED mid.
- * 2. Verse = tighter on figure (intimate zoom). Chorus = pull back for
- *    formation / world open (ease zoom out on high energy + build fall /
- *    section intensity — not only when build falls).
- * 3. Push-in tracks audio.build (0→1) — anticipation earns chorus pull-back
- *    reward (2122 psych); dutch only when world is tense (build high /
- *    emotion.aggression); clear dutch on chorus resolve / release.
- * 4. Shake = kick amplitude + drop burst ONLY (fast decay) — groove pulse,
- *    not startle spam. Mode 'shake' with low kick/drop/rolesIntent.shake
- *    → gentle drift (stable character).
- * 5. Drift/float soft in verse & breakdown; modest zoom; no wild rotation.
- * 6. Whip / hard reframe only at section gates (mode whip or drop pulse):
- *    brief lateral snap toward a wall/sign plane, then ease back to center.
- *    After startle/whip: re-crosshair human immediately (snap bias to cast).
- * 7. Quiet verse → slight push intimacy; huge energy → open/pull — don't
- *    fight abstract LED with chaos cinema. Lyrics stay readable.
- * 8. Cast framing (directive.cast / characters): placement sky|mid|foreground
- *    HOLD: when cast active → bias toward foreground intimate push-in; lock crosshair.
- *    + character scale (lone / duo / crowd). Prefer cast over random shake
- *    when kind !== 'none'. Hold longer on figure in sad/dark lyric windows;
- *    pull back for bright chorus formation.
- * 9. Travel / orbit (CEO keep-adding): intentional pan/dolly/crane/drift
- *    moves through the frame (not locked static). Occasional short orbit
- *    arcs when energy earns it (high energy / drop / peak chorus / build
- *    crest) — punctuation, not constant spin. With cast active, travel
- *    orbits the subject; never pan into empty frame.
+ * Rules:
+ * 1. ONE visual style per video, FOLLOWING the Scene Director style lock
+ *    (directive.styleLock / styleLook from Worlds styleFamilies.js). The
+ *    camera does not pick its own style. While stylePending is true (auto
+ *    intro, ≤~6s) the fallback profile is held and not committed. Once
+ *    pending clears, the lock is committed once per track. Mid-song
+ *    styleLock debounce remains as a harmless hold (style chips are being
+ *    removed — do not rely on a chip-switch path). cozy is a sixth locked
+ *    styleLock mapped to cozy_dolly.
+ * 2. Character REACTS to the world instead of wandering (reactions.js):
+ *    - NO tracking shots that follow aimless walking (lateral drift removed).
+ *    - Reaction beats: detect directive.reaction (why !== 'idle', skip
+ *      bounce/headbang) using gazeU/gazeV and `since` -> HOLD on figure
+ *      (0.4–0.8s) -> PUSH/WHIP toward the gaze/focal -> RETURN to figure.
+ *    - Slow push-ins on peaks (no random orbit spin arcs).
+ * 3. Preserved craft:
+ *    - Crosshair the cast through kick/drop, except sad+composition, which
+ *      holds the figure at the composition edge (focalU/focalV) and leaves
+ *      the empty/negative space empty — chaos must not recenter it.
+ *    - Intimate foreground bias when cast is active (suppressed for sad+comp).
+ *    - Shake = kick + drop ONLY. With composition, shake / whip / hit-dutch /
+ *      fast push-ins scale with composition.intensity (low = calm, high =
+ *      chaotic) times the profile chaos ceiling (dread_still most restrained;
+ *      cozy_dolly shake 0 / dutch 0 at baseline, chaotic only at high I).
+ *    - Dutch = tension-only, except heavy_evil which also allows dutch on hits
+ *      (both intensity-scaled when composition is present). Loud sad may use
+ *      composition.horizonTilt / tilt as roll; quiet sad has none.
+ *    - Whip-pans re-crosshair / return to ONE readable focal (composition
+ *      focalU/V, or reaction gaze, or cast) — never into empty frame.
+ *    - motionMul scales travel amplitude and speed. No composition → current
+ *      behavior (full profile grammar, no edge bias).
  *
- * Cast shape: { kind, action, placement, count, conceptId }
- *   placement: 'sky' | 'mid' | 'foreground'
- *   kind examples: traveler, figure_lone, silhouette, duo, crowd_ghosts,
- *                  congregation, beast, none
- *
- * API (stable): setMode(mode);
- *   update(dt,audio,emotion,scaleMul,rolesIntent,cast=null)
- *   → {x,y,zoom,rotation}; apply(ctx,w,h,transform).
- *   cast also accepted via rolesIntent.cast as fallback.
+ * API:
+ *   setMode(mode)
+ *   lockStyle(opts) / reset()
+ *   getStyleProfile() / getReactionState() / getStyleSwitchCount() / isStyleCommitted() / getCompositionState()
+ *   update(dt, audio, emotion, scaleMul=1, rolesIntent=null, cast=null, directive=null)
+ *   apply(ctx, w, h, transform)
  */
 import {
   biasTowardCenter,
+  biasTowardPoint,
   castFraming,
   clampPunch,
   clampRotation,
   clampToCenter,
-  clampZoom,
+  clampZoomToRange,
   decayToward,
   smooth01,
-} from './framing.js?v=art8';
+} from './framing.js?v=mood4';
+import {
+  CAMERA_STYLE_PROFILES,
+  FALLBACK_PROFILE_ID,
+  constrainMode,
+  extractTrackKey,
+  isKnownStyleLock,
+  isStylePending,
+  pickCameraStyleProfile,
+  profileForStyleLock,
+  readStyleLock,
+} from './styleProfile.js?v=mood4';
+import {
+  COMPOSITION_TILT_MAX,
+  chaosAmount,
+  compositionRestOffset,
+  compositionTiltRad,
+  effectiveShakeScales,
+  intensityDrive,
+  isSadComposition,
+  pushIntensityScale,
+  readComposition,
+  sadReactionOffset,
+  whipAmplitude,
+  whipDirectionX,
+} from './composition.js?v=mood4';
+
+const STYLE_DEBOUNCE_SEC = 0.15;
+const LENS_BLEND_SEC = 0.75;
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function blendLens(fromProf, toProf, t) {
+  const k = Math.max(0, Math.min(1, t));
+  if (!fromProf || k >= 1) {
+    return { lens: toProf.lens, motion: toProf.motion, shake: toProf.shake };
+  }
+  const fl = fromProf.lens;
+  const tl = toProf.lens;
+  const fm = fromProf.motion;
+  const tm = toProf.motion;
+  const fs = fromProf.shake;
+  const ts = toProf.shake;
+  return {
+    lens: {
+      baseZoom: lerp(fl.baseZoom, tl.baseZoom, k),
+      zoomMin: lerp(fl.zoomMin, tl.zoomMin, k),
+      zoomMax: lerp(fl.zoomMax, tl.zoomMax, k),
+      zoomBreath: lerp(fl.zoomBreath, tl.zoomBreath, k),
+      buildPushScale: lerp(fl.buildPushScale, tl.buildPushScale, k),
+      chorusPullScale: lerp(fl.chorusPullScale || 0, tl.chorusPullScale || 0, k),
+      chorusPushScale: lerp(fl.chorusPushScale || 0, tl.chorusPushScale || 0, k),
+      peakPushScale: lerp(fl.peakPushScale, tl.peakPushScale, k),
+    },
+    motion: {
+      ...tm,
+      moveSpeed: lerp(fm.moveSpeed, tm.moveSpeed, k),
+      easeRate: lerp(fm.easeRate, tm.easeRate, k),
+      travelAmpY: lerp(fm.travelAmpY, tm.travelAmpY, k),
+    },
+    shake: {
+      ...ts,
+      kickScale: lerp(fs.kickScale || 0, ts.kickScale || 0, k),
+      dropScale: lerp(fs.dropScale || 0, ts.dropScale || 0, k),
+      dutchMax: lerp(fs.dutchMax || 0, ts.dutchMax || 0, k),
+      whipSpeed: lerp(fs.whipSpeed, ts.whipSpeed, k),
+      chaosKick: lerp(fs.chaosKick || 0, ts.chaosKick || 0, k),
+      chaosDrop: lerp(fs.chaosDrop || 0, ts.chaosDrop || 0, k),
+    },
+  };
+}
+import { ReactionBeatTracker } from './reactions.js?v=mood4';
 
 export class CameraSystem {
   constructor() {
+    this._reactions = new ReactionBeatTracker();
+    this.reset();
+  }
+
+  reset() {
     this.mode = 'drift';
     this.x = 0;
     this.y = 0;
@@ -72,25 +150,170 @@ export class CameraSystem {
     this._py = 0;
     this._pRot = 0;
 
-    // Whip gate: brief lateral reveal toward a side plane, then settle
+    // Drop gate / re-crosshair snap
     this._whipX = 0;
-    this._whipSide = 1;
+    this._whipY = 0;
     this._whipCooldown = 0;
+    this._compState = null;
     this._prevDrop = 0;
     this._prevBuild = 0;
+    this._prevEnergy = 0;
 
-    // Cast placement bias (smoothed) + post-whip re-crosshair snap
+    // Cast placement bias (smoothed) + post-reaction/drop re-crosshair snap
     this._castY = 0;
     this._castZoom = 0;
     this._recrosshair = 0;
 
-    // Earned orbit punctuation — short arcs, not endless spin
-    this._orbitT = 0; // remaining arc seconds
-    this._orbitCd = 0; // cooldown between arcs
-    this._orbitAng = 0; // phase angle during arc
-    this._orbitSide = 1;
-    this._orbitAmp = 0; // radius of current arc
-    this._prevEnergy = 0;
+    // Slow peak push-in state
+    this._peakPush = 0;
+
+    // Style profile follows Scene Director styleLock (fallback until committed)
+    this._styleProfile = CAMERA_STYLE_PROFILES[FALLBACK_PROFILE_ID];
+    this._styleLocked = true;
+    this._styleCommitted = false;
+    this._committedLockKey = '';
+    this._pendingCandidate = '';
+    this._pendingHold = 0;
+    this._styleSwitchCount = 0;
+    this._lensFrom = null;
+    this._lensBlendT = 1;
+    this._hitDutch = 0;
+    this._hitDutchSign = 1;
+    this._lockedTrackKey = '';
+
+    // Deterministic simulation clock + wall-gap show-restart detector
+    this._simT = 0;
+    this._lastWallMs = 0;
+
+    this._reactions.reset();
+  }
+
+  /** Apply a target profile, optionally blending lens/zoom over LENS_BLEND_SEC. */
+  _applyProfile(profile, lockKey, { countSwitch = false, snap = false } = {}) {
+    const next = profile || CAMERA_STYLE_PROFILES[FALLBACK_PROFILE_ID];
+    const same = this._styleProfile && this._styleProfile.id === next.id;
+    if (!same) {
+      this._lensFrom = snap ? null : this._styleProfile;
+      this._lensBlendT = snap || !this._styleProfile ? 1 : 0;
+      this._styleProfile = next;
+    }
+    this._styleLocked = true;
+    if (lockKey != null && lockKey !== '') this._committedLockKey = lockKey;
+    if (countSwitch && !same) this._styleSwitchCount += 1;
+    return this._styleProfile;
+  }
+
+  _ensureFallback(snap = false) {
+    if (!this._styleProfile || this._styleProfile.id !== FALLBACK_PROFILE_ID) {
+      this._applyProfile(CAMERA_STYLE_PROFILES[FALLBACK_PROFILE_ID], '', { snap });
+    }
+    return this._styleProfile;
+  }
+
+  /**
+   * Follow directive.styleLock / styleLook. Holds fallback while stylePending.
+   * Commits once pending clears (not counted as a switch). Later lock value
+   * changes debounce (~150ms) then switch once, blending lens 0.75s.
+   */
+  _followDirectorStyle(directive, dt) {
+    const pending = isStylePending(directive);
+    const lock = readStyleLock(directive);
+
+    if (pending) {
+      this._ensureFallback(this._simT < 0.05);
+      this._styleCommitted = false;
+      this._pendingCandidate = '';
+      this._pendingHold = 0;
+      return;
+    }
+
+    if (!lock || !isKnownStyleLock(lock)) {
+      if (!this._styleCommitted) this._ensureFallback(this._simT < 0.05);
+      this._pendingCandidate = '';
+      this._pendingHold = 0;
+      return;
+    }
+
+    const want = profileForStyleLock(lock);
+
+    if (!this._styleCommitted) {
+      // First director commit after pending (or on a ready lock) — not a switch
+      this._applyProfile(want, lock, { countSwitch: false, snap: this._simT < 0.05 });
+      this._styleCommitted = true;
+      this._committedLockKey = lock;
+      this._pendingCandidate = '';
+      this._pendingHold = 0;
+      return;
+    }
+
+    if (lock === this._committedLockKey) {
+      this._pendingCandidate = '';
+      this._pendingHold = 0;
+      return;
+    }
+
+    if (this._pendingCandidate !== lock) {
+      this._pendingCandidate = lock;
+      this._pendingHold = 0;
+      return;
+    }
+    this._pendingHold += dt;
+    if (this._pendingHold >= STYLE_DEBOUNCE_SEC) {
+      this._applyProfile(want, lock, { countSwitch: true, snap: false });
+      this._committedLockKey = lock;
+      this._pendingCandidate = '';
+      this._pendingHold = 0;
+    }
+  }
+
+  /** Explicitly lock from a directive (tests / callers). Does not snap mid-show. */
+  lockStyle(opts = {}) {
+    const trackKey = opts.trackKey ?? extractTrackKey(opts.audio, opts.directive, opts.cast);
+    this._lockedTrackKey = trackKey || this._lockedTrackKey || '';
+    if (opts.directive) {
+      this._followDirectorStyle(opts.directive, 0);
+      return this._styleProfile;
+    }
+    const profile = pickCameraStyleProfile({ directive: opts.directive });
+    return this._applyProfile(profile, readStyleLock(opts.directive) || '', {
+      countSwitch: false,
+      snap: !!opts.snap,
+    });
+  }
+
+  getStyleProfile() {
+    return this._styleProfile;
+  }
+
+  getStyleSwitchCount() {
+    return this._styleSwitchCount;
+  }
+
+  isStyleCommitted() {
+    return !!this._styleCommitted;
+  }
+
+  getCommittedStyleLock() {
+    return this._committedLockKey;
+  }
+
+  getReactionState() {
+    return this._reactions.getState();
+  }
+
+  getCompositionState() {
+    return (
+      this._compState || {
+        hasComp: false,
+        chaos: 0,
+        drive: 0,
+        sad: false,
+        restX: 0,
+        restY: 0,
+        kickScale: 0,
+        dropScale: 0,
+      }
+    );
   }
 
   setMode(mode) {
@@ -104,314 +327,370 @@ export class CameraSystem {
    * @param {number} [scaleMul=1]
    * @param {object|null} [rolesIntent=null]
    * @param {object|null} [cast=null] Scene Director cast; also rolesIntent.cast
+   * @param {object|null} [directive=null] Optional Scene Director directive
    * @returns {{x,y,zoom,rotation}} transform to apply around center
    */
-  update(dt, audio, emotion, scaleMul = 1, rolesIntent = null, cast = null) {
-    const t = performance.now() / 1000;
+  update(
+    dt,
+    audio,
+    emotion,
+    scaleMul = 1,
+    rolesIntent = null,
+    cast = null,
+    directive = null
+  ) {
     const d = Math.max(0.001, Math.min(0.05, dt || 0.016));
+    const wallMs = typeof performance !== 'undefined' ? performance.now() : 0;
+
+    // Detect show exit/restart gap (>3s pause between renders) or track identity change
+    const ri = rolesIntent || {};
+    const castIn = cast ?? ri.cast ?? directive?.cast ?? directive?.characters ?? null;
+    const trackKey = extractTrackKey(audio, directive, castIn);
+
+    if (
+      this._styleLocked &&
+      this._lastWallMs > 0 &&
+      wallMs > 0 &&
+      wallMs - this._lastWallMs > 3000 &&
+      this._simT > 0.25
+    ) {
+      this.reset();
+    } else if (
+      this._styleLocked &&
+      trackKey &&
+      this._lockedTrackKey &&
+      trackKey !== this._lockedTrackKey
+    ) {
+      this.reset();
+    }
+    this._lastWallMs = wallMs;
+    this._simT += d;
+    const t = this._simT;
+
+    if (trackKey && !this._lockedTrackKey) this._lockedTrackKey = trackKey;
+
+    // Follow Scene Director styleLock (pending hold, debounce, mid-song chip tap)
+    this._followDirectorStyle(directive, d);
+    if (this._lensBlendT < 1) {
+      this._lensBlendT = Math.min(1, this._lensBlendT + d / LENS_BLEND_SEC);
+    }
+
+    const profile = this._styleProfile || CAMERA_STYLE_PROFILES[FALLBACK_PROFILE_ID];
+    const blended = blendLens(this._lensFrom, profile, this._lensBlendT);
+    const lens = blended.lens;
+    const motion = blended.motion;
+    const shakeCfg = blended.shake;
+
+    const comp = readComposition(directive);
+    const hasComp = !!comp;
+    const drive = hasComp ? intensityDrive(comp.intensity) : 1;
+    const chaos = hasComp ? chaosAmount(comp.intensity, profile) : 1;
+    const lockKey = this._committedLockKey || readStyleLock(directive) || '';
+    const sadComp = isSadComposition(comp, lockKey);
+    const rest = hasComp ? compositionRestOffset(comp, scaleMul) : { x: 0, y: 0 };
+    const shakeEff = effectiveShakeScales(shakeCfg, chaos, hasComp);
+    const pScale = pushIntensityScale(hasComp, hasComp ? drive : 1);
+    const motionMul = hasComp ? comp.motionMul : 1;
+
+    this._compState = {
+      hasComp,
+      chaos,
+      drive: hasComp ? drive : 1,
+      sad: sadComp,
+      restX: rest.x,
+      restY: rest.y,
+      kickScale: shakeEff.kickScale,
+      dropScale: shakeEff.dropScale,
+      motionMul,
+      intensity: hasComp ? comp.intensity : null,
+    };
+
     const energy = audio?.energy || 0;
     const build = audio?.build || 0;
     const drop = audio?.drop || 0;
     const silence = !!audio?.silence;
     const aggression = emotion?.aggression || emotion?.tension || 0;
-    const ri = rolesIntent || {};
     const kick = (audio?.roles || audio?.instruments || {}).kick || 0;
     const shakeIntent = Math.max(ri.shake || 0, ri.kickPunch || 0);
-
-    // Cast: explicit 6th arg, else rolesIntent.cast fallback
-    const castIn = cast ?? ri.cast ?? null;
     const cf = castFraming(castIn);
 
-    // Chorus-open proxy: high section intensity with build falling / low
-    // (2122: prediction reward — world opens as expected after build tension)
     const buildFalling = build < this._prevBuild - 0.02;
-    const buildRising = build > this._prevBuild + 0.015;
     const chorusOpen =
       energy > 0.55 && (build < 0.35 || buildFalling) && drop < 0.4;
-    // Quiet verse / breakdown: low energy, low build
     const intimate = !chorusOpen && energy < 0.4 && build < 0.45 && drop < 0.25;
 
-    // Sad/dark lyric window → hold longer on figure (2122 valence)
     const darkHold =
       !chorusOpen &&
       Math.max(
         emotion?.sadness || 0,
         emotion?.darkness || 0,
         emotion?.melancholy || 0,
-        (emotion?.valence != null && emotion.valence < 0
-          ? -emotion.valence
-          : 0)
+        emotion?.valence != null && emotion.valence < 0 ? -emotion.valence : 0
       );
 
-    // Kinetic travel scale — stronger when energy/build live; soft in silence
+    // Constrain requested section mode to locked profile's compatible move subset
+    const mode = constrainMode(profile, this.mode);
     const soft = silence ? 0.35 : 1;
-    const travelMul =
+    const spd = motion.moveSpeed * motionMul;
+    const ampY =
+      motion.travelAmpY *
       soft *
-      (0.85 +
-        0.45 * smooth01(energy) +
-        0.2 * smooth01(build) +
-        (chorusOpen ? 0.15 * smooth01(energy) : 0));
-    // With cast staged, keep travel but orbit the subject (not empty frame)
-    const subjectMul = cf.active ? 0.58 : 1;
+      motionMul *
+      (sadComp ? 0.22 : cf.active ? 0.45 : 1);
 
-    let x = 0;
-    let y = 0;
-    let zoom = 1;
+    // Base lens feel stays anchored to the locked profile (NO lateral tracking wander).
+    // Composition rest places the figure at focalU/focalV when present.
+    let x = rest.x;
+    let y = rest.y;
+    let zoom = lens.baseZoom;
     let rotation = 0;
-
-    const mode = this.mode;
-    const tm = travelMul * subjectMul * scaleMul;
 
     switch (mode) {
       case 'dolly':
       case 'slow_dolly': {
-        const rate = mode === 'slow_dolly' ? 0.09 : 0.14;
-        zoom = 1 + Math.sin(t * rate) * 0.03 * scaleMul * soft;
-        // Stronger forward/back + vertical travel through space
-        y = Math.sin(t * 0.07) * 6.5 * soft * subjectMul;
-        x = Math.sin(t * 0.05) * 4.5 * tm;
-        zoom += smooth01(build) * 0.05 * scaleMul;
-        if (chorusOpen) zoom -= 0.045 * scaleMul * smooth01(energy);
+        const rate = (mode === 'slow_dolly' ? 0.14 : 0.22) * spd;
+        zoom += Math.sin(t * rate) * lens.zoomBreath * scaleMul * soft;
+        y = rest.y + Math.sin(t * 0.12 * spd) * ampY;
         break;
       }
-      case 'pan':
-        // Sweep through frame — intentional lateral travel
-        x = Math.sin(t * 0.16) * 15 * tm;
-        y = Math.sin(t * 0.065) * 4.5 * soft * subjectMul;
-        zoom = 1 + Math.sin(t * 0.05) * 0.012 * soft;
+      case 'push': {
+        zoom +=
+          (0.028 +
+            smooth01(build) * lens.buildPushScale * 0.7 * pScale +
+            (intimate ? 0.015 : 0)) *
+          scaleMul;
+        zoom += Math.sin(t * 0.28 * spd) * lens.zoomBreath * 0.6 * soft;
+        y = rest.y + Math.sin(t * 0.1 * spd) * ampY * 0.65;
         break;
-      case 'orbit':
-        // Mode orbit = gentle base circle; earned arc (below) adds punctuation.
-        // Avoid endless fast spin — slow base only when energy supports it.
-        {
-          const orbitFuel = Math.max(energy, drop, smooth01(build));
-          const baseR = (6 + 6 * smooth01(orbitFuel)) * tm;
-          const spd = 0.12 + 0.08 * smooth01(orbitFuel);
-          x = Math.cos(t * spd) * baseR;
-          y = Math.sin(t * spd) * baseR * 0.55 * (cf.active ? 0.5 : 1);
-          zoom = 1.02 + Math.sin(t * 0.18) * 0.018 * soft;
+      }
+      case 'pull': {
+        const pullAmt = cf.active ? lens.chorusPullScale * 0.35 : lens.chorusPullScale;
+        zoom -= (0.02 + (chorusOpen ? pullAmt * smooth01(energy) : 0)) * scaleMul;
+        zoom += Math.sin(t * 0.12 * spd) * lens.zoomBreath * 0.7 * soft;
+        y = rest.y + Math.cos(t * 0.1 * spd) * ampY * 0.7;
+        break;
+      }
+      case 'crane': {
+        y = rest.y + Math.sin(t * 0.14 * spd) * ampY * 1.25;
+        zoom += (chorusOpen && !cf.active ? -0.015 : intimate ? 0.015 : 0) * scaleMul;
+        zoom += Math.sin(t * 0.14 * spd) * lens.zoomBreath * 0.6 * soft;
+        break;
+      }
+      case 'dutch': {
+        // Tension-only dutch, capped by locked profile (intensity-scaled when composition present)
+        const tense = Math.max(smooth01(build), aggression);
+        if (!chorusOpen && tense >= 0.2 && shakeEff.dutchMax > 0) {
+          rotation =
+            Math.sin(t * 0.28 * spd) * shakeEff.dutchMax * 0.65 * tense +
+            aggression * shakeEff.dutchMax * 0.35;
         }
+        y = rest.y + Math.sin(t * 0.12 * spd) * ampY * 0.75;
+        zoom += Math.sin(t * 0.16 * spd) * lens.zoomBreath * 0.6 * soft;
         break;
+      }
       case 'shake': {
-        // Low kick/drop/intent → behave like gentle drift (stable character)
-        const shakeFuel = Math.max(kick, drop, shakeIntent);
-        if (shakeFuel < 0.35) {
-          x = Math.sin(t * 0.1) * 7.5 * soft * subjectMul;
-          y = Math.cos(t * 0.075) * 5 * soft * subjectMul;
-          zoom = 1 + Math.sin(t * 0.07) * 0.015;
-        } else {
-          // Framing stays near center; punch overlay handles the hit
-          x = Math.sin(t * 0.4) * 2 * soft;
-          y = Math.cos(t * 0.35) * 1.5 * soft;
-        }
+        y = rest.y + Math.cos(t * 0.15 * spd) * ampY * 0.5;
+        zoom += Math.sin(t * 0.15 * spd) * lens.zoomBreath * 0.5 * soft;
+        break;
+      }
+      case 'whip': {
+        y = rest.y + Math.sin(t * 0.1 * spd) * ampY * 0.4;
         break;
       }
       case 'drift':
-        // Soft verse float — still travels, not locked
-        x =
-          (Math.sin(t * 0.09) * 9 + Math.sin(t * 0.035) * 4.5) *
-          soft *
-          subjectMul *
-          (0.9 + 0.35 * smooth01(energy));
-        y = Math.cos(t * 0.07) * 6.5 * soft * subjectMul;
-        zoom = 1 + Math.sin(t * 0.055) * 0.018 * soft;
-        break;
-      case 'push':
-        // Intimate push toward figure; build escalates anticipation
-        zoom = 1 + (0.04 + smooth01(build) * 0.08 + (intimate ? 0.025 : 0)) * scaleMul;
-        zoom += Math.sin(t * 0.35) * 0.008 * soft;
-        // Micro lateral travel so push isn't a static lock
-        x = Math.sin(t * 0.11) * 3.5 * soft * subjectMul;
-        y = Math.sin(t * 0.08) * 2.2 * soft * subjectMul;
-        break;
-      case 'pull':
-        // World / formation open — chorus energy pulls further (reward)
-        zoom = 1 - (0.035 + (chorusOpen ? 0.04 * smooth01(energy) : 0)) * scaleMul;
-        zoom += Math.sin(t * 0.08) * 0.008 * soft;
-        x = Math.sin(t * 0.1) * 5 * tm;
-        y = Math.cos(t * 0.07) * 3.5 * soft * subjectMul;
-        break;
-      case 'dutch': {
-        // Tension only; clear toward 0 when chorus opens / aggression+build low
-        const tense = Math.max(smooth01(build), aggression);
-        if (chorusOpen || tense < 0.2) {
-          rotation = 0;
-        } else {
-          rotation = Math.sin(t * 0.28) * 0.028 * tense + aggression * 0.02;
-        }
-        x = Math.sin(t * 0.14) * 8 * soft * subjectMul;
-        y = Math.sin(t * 0.09) * 3 * soft * subjectMul;
+      default: {
+        y = rest.y + Math.cos(t * 0.11 * spd) * ampY * 0.9;
+        zoom += Math.sin(t * 0.11 * spd) * lens.zoomBreath * soft;
         break;
       }
-      case 'crane':
-        // Vertical travel through frame — stronger sweep
-        y = Math.sin(t * 0.1) * 16 * tm;
-        x = Math.sin(t * 0.055) * 5 * soft * subjectMul;
-        zoom = 1.03 + (chorusOpen ? -0.02 : intimate ? 0.02 : 0) * scaleMul;
-        break;
-      case 'whip':
-        // Gate motion handled below; hold a calm base framing mid-whip
-        x = 0;
-        y = Math.sin(t * 0.05) * 2 * soft;
-        zoom = 1.01;
-        break;
-      default:
-        x = Math.sin(t * 0.085) * 7 * soft * subjectMul;
-        y = Math.cos(t * 0.06) * 3.5 * soft * subjectMul;
-        break;
     }
 
-    // --- Character staging zoom overlay (all modes) ---
-    // 2122 psych: escalate push during build (anticipation), then clearly
-    // reward with pull-back when chorus opens (prediction / peak pleasure).
-    // Escalation is nonlinear so late-build feels tighter than early.
-    const buildPush = Math.pow(smooth01(build), 1.35) * 0.065 * scaleMul;
-    const versePush = intimate ? 0.03 * scaleMul : 0;
-    // Dark/sad hold: linger tighter on figure (analytic lyric attention)
-    const darkPush = darkHold > 0.25 ? 0.022 * scaleMul * smooth01(darkHold) : 0;
-    // Chorus pull-back reward — stronger than prior so the open is felt
-    const chorusPull = chorusOpen
-      ? 0.06 * scaleMul * smooth01(energy)
+    // heavy_evil: dutch allowed on kick/drop hits (in addition to tension dutch)
+    if (shakeCfg.dutchOnHits && shakeEff.dutchMax > 0) {
+      const hit = Math.max(kick > 0.5 ? kick : 0, drop > 0.45 ? drop : 0);
+      if (hit > 0 && Math.abs(this._hitDutch) < 0.002) {
+        this._hitDutchSign = this._hitDutchSign === 1 ? -1 : 1;
+      }
+      const target =
+        hit > 0 ? shakeEff.dutchMax * Math.min(1, hit) * this._hitDutchSign : 0;
+      this._hitDutch = decayToward(this._hitDutch, target, hit > 0 ? 18 : 8, d);
+      rotation += this._hitDutch;
+    } else {
+      this._hitDutch = decayToward(this._hitDutch, 0, 10, d);
+    }
+
+    // Loud sad may use composition.horizonTilt / tilt as roll; quiet sad has none.
+    const tiltRad = compositionTiltRad(comp, { sad: sadComp });
+    if (tiltRad) rotation += tiltRad;
+
+    // --- Section & Peak dynamics WITHIN locked profile ---
+    const buildPush =
+      Math.pow(smooth01(build), 1.35) * lens.buildPushScale * scaleMul * pScale;
+    const versePush = intimate ? 0.022 * scaleMul : 0;
+    const darkPush = darkHold > 0.25 ? 0.018 * scaleMul * smooth01(darkHold) : 0;
+    const chorusPull =
+      chorusOpen && !cf.active && !(lens.chorusPushScale > 0)
+        ? lens.chorusPullScale * scaleMul * smooth01(energy) * 0.7
+        : 0;
+    // cozy_dolly: soft chorus push-in (gentle, not punchy)
+    const chorusPush =
+      chorusOpen && (lens.chorusPushScale || 0) > 0
+        ? lens.chorusPushScale * scaleMul * (0.55 + 0.45 * (hasComp ? drive : 1))
+        : 0;
+
+    // Push-ins on peaks: with composition, amount + ease scale with intensity
+    // (low I = calm/small, high I = faster/stronger push-ins)
+    const peakLive =
+      !silence && (chorusOpen || energy > 0.65 || build > 0.68 || drop > 0.5);
+    const peakStrength = Math.max(energy, build, drop);
+    const peakTarget = peakLive
+      ? lens.peakPushScale *
+        scaleMul *
+        Math.max(0.55, Math.min(1, peakStrength)) *
+        pScale
       : 0;
-    // Huge energy without build → open/pull (don't fight with chaos zoom)
-    const energyOpen =
-      energy > 0.75 && build < 0.5 && !intimate ? 0.025 * scaleMul * energy : 0;
-    zoom += buildPush + versePush + darkPush - chorusPull - energyOpen;
+    const peakEase = peakLive
+      ? hasComp
+        ? 1.1 + 5.0 * drive
+        : 1.35
+      : hasComp
+        ? 2.1 + 2.0 * drive
+        : 2.1;
+    this._peakPush = decayToward(this._peakPush, peakTarget, peakEase, d);
 
-    // --- Earned orbit / spin punctuation (short arcs, not constant) ---
-    this._orbitCd = Math.max(0, this._orbitCd - d);
-    this._orbitT = Math.max(0, this._orbitT - d);
+    zoom += buildPush + versePush + darkPush + this._peakPush - chorusPull + chorusPush;
 
-    const energyRise = energy > this._prevEnergy + 0.06;
-    const dropPulseGate = drop > 0.55 && this._prevDrop < 0.4;
-    // Build crest: late build peaking or just tipping into fall
-    const buildCrest =
-      (build > 0.78 && buildRising) || (build > 0.72 && buildFalling && this._prevBuild > 0.75);
-    // Peak chorus open with heat
-    const peakChorus = chorusOpen && energy > 0.68;
-    // High-energy storm while mode itself is orbit (Scene picked it)
-    const orbitModeEarn = mode === 'orbit' && energy > 0.55 && drop < 0.85;
-
-    const canEarnOrbit =
-      !silence &&
-      !intimate &&
-      this._orbitT <= 0 &&
-      this._orbitCd <= 0 &&
-      mode !== 'whip' &&
-      (dropPulseGate ||
-        buildCrest ||
-        peakChorus ||
-        (energyRise && energy > 0.72) ||
-        (orbitModeEarn && energyRise));
-
-    if (canEarnOrbit) {
-      // Short arc duration — punctuation, not a carousel
-      const heat = Math.max(energy, drop, smooth01(build));
-      this._orbitT = 0.85 + 0.45 * smooth01(heat); // ~0.85–1.3s
-      this._orbitCd = 2.6 + 1.4 * (1 - smooth01(heat)); // longer cool when cooler
-      this._orbitSide = Math.random() < 0.5 ? -1 : 1;
-      this._orbitAng = Math.random() * Math.PI * 2;
-      // Radius: roomy when no cast; tighter orbit around subject when cast live
-      this._orbitAmp =
-        (cf.active ? 7.5 : 12) * (0.7 + 0.45 * smooth01(heat)) * soft * scaleMul;
-    }
-
-    let orbitX = 0;
-    let orbitY = 0;
-    let orbitRot = 0;
-    if (this._orbitT > 0 && this._orbitAmp > 0) {
-      // Envelope: ease in/out so arcs feel intentional, not abrupt
-      const dur = 0.85 + 0.45; // nominal max used for envelope shape
-      const life = Math.min(1, this._orbitT / Math.max(0.35, dur * 0.55));
-      const env = Math.sin(Math.min(1, life) * Math.PI); // 0→1→0 over remaining feel
-      const spd = 2.1 * this._orbitSide; // rad/s — ~1/3–1/2 turn per arc
-      this._orbitAng += spd * d;
-      const r = this._orbitAmp * env * (cf.active ? 0.72 : 1);
-      orbitX = Math.cos(this._orbitAng) * r;
-      orbitY = Math.sin(this._orbitAng) * r * (cf.active ? 0.35 : 0.55);
-      // Tiny spin lean during arc (not dutch — orbit punctuation only)
-      orbitRot = Math.sin(this._orbitAng) * 0.012 * env * (cf.active ? 0.55 : 1);
-    }
-
-    // --- Cast placement + character scale (HOLD: intimate FG push, keep crosshair) ---
-    // Travel pass: do NOT push intimate zoom harder — keep prior biases; allow
-    // lateral travel around the subject instead of killing wander to static.
-    this._castY = decayToward(this._castY, cf.yBias * soft, 7, d);
-    this._castZoom = decayToward(this._castZoom, cf.zoomBias * scaleMul, 7, d);
-    if (cf.active) {
-      y += this._castY;
+    // --- Cast placement + intimate foreground bias (suppressed for sad+composition) ---
+    if (cf.active && !sadComp) {
+      this._castY = decayToward(this._castY, cf.yBias * soft, 7, d);
+      this._castZoom = decayToward(this._castZoom, cf.zoomBias * scaleMul, 7, d);
       zoom += this._castZoom;
-      // Travel around subject — keep most intentional X, damp empty-frame drift
-      x *= 0.55;
-      // Cast look owns Y; mode + orbit whisper around placement
-      y = this._castY + (y - this._castY) * 0.28;
-      // Don't give away the intimate push on chorus open while cast is staged
-      if (chorusOpen) zoom += 0.035 * scaleMul;
+      y = rest.y + this._castY + (y - rest.y) * 0.28;
     } else {
       this._castY = decayToward(this._castY, 0, 6, d);
       this._castZoom = decayToward(this._castZoom, 0, 6, d);
     }
 
-    // Fold earned orbit into mode targets before smoothing
-    x += orbitX;
-    y += orbitY;
-    rotation += orbitRot;
+    // --- World Reaction Beat: HOLD on figure -> PUSH/WHIP to event -> RETURN ---
+    const rx = this._reactions.update(d, {
+      directive,
+      cast: castIn,
+      rolesIntent: ri,
+      audio,
+      profile,
+      scaleMul,
+    });
 
-    // Smooth intentional pose toward mode targets (continuity inside section)
-    const ease = mode === 'whip' ? 14 : this._orbitT > 0 ? 8 : 5.5;
+    if (rx.active) {
+      if (sadComp) {
+        // Keep the figure at its edge; only a subtle gaze push that stays off-center.
+        if (rx.phase === 'hold') {
+          x = rest.x;
+          y = rest.y;
+          zoom += rx.zoomDelta * 0.35;
+        } else {
+          const kept = sadReactionOffset(rest, {
+            x: rx.offsetX,
+            y: rx.offsetY,
+          });
+          x = kept.x;
+          y = kept.y;
+          zoom += rx.zoomDelta * 0.35;
+        }
+      } else if (rx.phase === 'hold') {
+        x = rest.x;
+        y = cf.active ? rest.y + this._castY : rest.y + (y - rest.y) * 0.3;
+        zoom += rx.zoomDelta;
+      } else {
+        // Push toward event/focal, then ease back to the rest focal (not empty frame)
+        x = rest.x + rx.offsetX;
+        y = cf.active
+          ? rest.y + this._castY * (1 - rx.eventWeight) + rx.offsetY
+          : y * (1 - rx.eventWeight) + rx.offsetY;
+        zoom += rx.zoomDelta;
+      }
+      if (rx.recrosshairTrigger) {
+        this._recrosshair = Math.max(this._recrosshair, 0.45);
+      }
+    }
+
+    // Smooth intentional pose toward targets
+    const ease =
+      rx.phase === 'push_to_event'
+        ? shakeCfg.whipSpeed
+        : rx.phase === 'hold'
+          ? Math.max(8, motion.easeRate * 1.6)
+          : motion.easeRate;
     this._mx = decayToward(this._mx, x, ease, d);
     this._my = decayToward(this._my, y, ease, d);
-    this._mZoom = decayToward(this._mZoom, zoom, ease, d);
-    // Dutch clears faster on chorus resolve / release
+    this._mZoom = decayToward(this._mZoom, zoom, Math.min(ease, 9), d);
+
     const rotEase = chorusOpen || (build < 0.25 && aggression < 0.25) ? 10 : 5;
     this._mRot = decayToward(this._mRot, rotation, rotEase, d);
 
-    // --- Whip / drop gate: brief lateral reveal of wall/sign plane ---
-    // Gate-only — never every bar (2122: startle = single gate then restore)
+    // --- Intensity whip-pans (composition only): fire on drop, return to rest focal ---
     this._whipCooldown = Math.max(0, this._whipCooldown - d);
     const dropPulse = drop > 0.55 && this._prevDrop < 0.4;
-    const whipMode = mode === 'whip';
-    let whipFired = false;
-    if ((whipMode || dropPulse) && this._whipCooldown <= 0) {
-      this._whipSide = Math.random() < 0.5 ? -1 : 1;
-      // Small offset toward a side plane (environmental type reveal), then settle
-      this._whipX = this._whipSide * (10 + 4 * Math.min(1, drop + (whipMode ? 0.5 : 0)));
-      this._whipCooldown = whipMode ? 0.85 : 0.7;
-      whipFired = true;
-      // After startle/whip: re-crosshair human immediately
+    const whipAmp = whipAmplitude(shakeCfg, chaos, hasComp);
+    if (hasComp && dropPulse && this._whipCooldown <= 0 && whipAmp > 1.2 && !rx.active) {
+      const dir = whipDirectionX(comp, rest.x);
+      this._whipX = dir * whipAmp;
+      this._whipY = 0;
+      this._whipCooldown = 0.7;
+      this._recrosshair = 0.55;
+    } else if (
+      !hasComp &&
+      dropPulse &&
+      this._whipCooldown <= 0 &&
+      shakeCfg.dropScale > 0.25 &&
+      !rx.active
+    ) {
+      // No-composition fallback: re-crosshair only, no lateral whip into empty space
+      this._whipX = 0;
+      this._whipY = 0;
+      this._whipCooldown = 0.75;
       this._recrosshair = 0.45;
     }
-    // Ease whip offset back toward center (never sticky)
-    this._whipX = decayToward(this._whipX, 0, 4.5, d);
+    const whipSettle = hasComp ? Math.max(4.2, (shakeCfg.whipSpeed || 8) * 0.45) : 5.5;
+    this._whipX = decayToward(this._whipX, 0, whipSettle, d);
+    this._whipY = decayToward(this._whipY, 0, whipSettle, d);
     this._recrosshair = Math.max(0, this._recrosshair - d);
 
-    // --- Punch shake overlay (kick + drop ONLY — groove, not startle spam) ---
-    const shakeMul = cf.active ? cf.shakeMul : 1;
+    // --- Punch shake overlay (kick + drop ONLY — intensity-scaled when composition present) ---
+    const shakeMul =
+      (cf.active ? cf.shakeMul : 1) * (rx.active ? rx.shakeDamp : 1);
     let punchFuel = 0;
-    if (kick > 0.55) {
-      punchFuel = Math.max(punchFuel, kick * 9 * (1 + shakeIntent * 0.4));
+    if (kick > 0.55 && shakeEff.kickScale > 0) {
+      punchFuel = Math.max(
+        punchFuel,
+        kick * 9 * shakeEff.kickScale * (1 + shakeIntent * 0.35)
+      );
     }
-    if (drop > 0.5) {
-      punchFuel = Math.max(punchFuel, drop * 11);
+    if (drop > 0.5 && shakeEff.dropScale > 0) {
+      punchFuel = Math.max(punchFuel, drop * 11 * shakeEff.dropScale);
     }
-    if (shakeIntent > 0.55 && (kick > 0.4 || drop > 0.35)) {
-      punchFuel = Math.max(punchFuel, shakeIntent * 10);
+    if (
+      shakeIntent > 0.55 &&
+      (kick > 0.4 || drop > 0.35) &&
+      shakeEff.kickScale > 0
+    ) {
+      punchFuel = Math.max(punchFuel, shakeIntent * 9 * shakeEff.kickScale);
     }
-    // Beat may add a tiny zoom tick but does NOT drive continuous shake
-    if (audio?.beat && (kick > 0.45 || drop > 0.4)) {
-      punchFuel = Math.max(punchFuel, 5);
-      this._mZoom += 0.012 * scaleMul;
+    if (audio?.beat && (kick > 0.45 || drop > 0.4) && shakeEff.kickScale > 0) {
+      punchFuel = Math.max(punchFuel, 4.5 * shakeEff.kickScale);
+      this._mZoom += 0.008 * shakeEff.kickScale * scaleMul;
     }
     punchFuel *= shakeMul;
     if (punchFuel > this.shakeAmp) this.shakeAmp = punchFuel;
 
     if (this.shakeAmp > 0.4) {
       const amp = this.shakeAmp;
-      // Overlay around origin — will be clamped so silhouette stays centered
       this._px = (Math.random() - 0.5) * amp * 0.55;
       this._py = (Math.random() - 0.5) * amp * 0.4;
-      this._pRot = (Math.random() - 0.5) * 0.008 * Math.min(amp, 12);
-      // Fast decay after bursts
+      this._pRot =
+        shakeEff.kickScale > 0
+          ? (Math.random() - 0.5) * 0.007 * Math.min(amp, 12) * shakeEff.kickScale
+          : 0;
       this.shakeAmp *= Math.exp(-10 * d);
     } else {
       this.shakeAmp = 0;
@@ -422,33 +701,56 @@ export class CameraSystem {
 
     const punch = clampPunch(this._px, this._py);
 
-    // Compose: intentional framing + whip reveal + punch overlay
+    // Compose: intentional framing + whip excursion + punch overlay
     let outX = this._mx + this._whipX + punch.x;
-    let outY = this._my + punch.y;
+    let outY = this._my + this._whipY + punch.y;
     let outZoom = this._mZoom;
     let outRot = this._mRot + this._pRot;
 
-    // Post-whip re-crosshair: snap bias back to cast placement center
-    const reSnap = this._recrosshair > 0 ? 0.55 + 0.35 * (this._recrosshair / 0.45) : 0;
-    // Cast: keep crosshair but allow travel to read (softer bias than prior lock)
-    const centerBias = cf.active
-      ? 0.34 + reSnap * 0.32
-      : 0.18 + reSnap * 0.22;
-    // During re-crosshair, pull Y toward cast placement (or 0), kill whip residual faster
-    if (reSnap > 0) {
-      const targetY = cf.active ? this._castY : 0;
+    // Re-crosshair / return to ONE readable rest focal (composition, gaze rest, or center)
+    const reSnap =
+      this._recrosshair > 0 ? 0.55 + 0.35 * (this._recrosshair / 0.45) : 0;
+    if (reSnap > 0 && rx.eventWeight < 0.1) {
+      const targetX = rest.x;
+      const targetY = sadComp
+        ? rest.y
+        : cf.active
+          ? rest.y + this._castY
+          : rest.y;
+      outX = outX * (1 - reSnap * 0.7) + targetX * (reSnap * 0.7);
       outY = outY * (1 - reSnap * 0.7) + targetY * (reSnap * 0.7);
-      outX *= 1 - reSnap * 0.5;
-      if (whipFired) this._whipX *= 0.35;
     }
 
-    // Center bias then hard clamp — subject never leaves phone LED crosshair
-    const biased = biasTowardCenter(outX, outY, centerBias);
-    const clamped = clampToCenter(biased.x, biased.y, scaleMul);
-    outX = clamped.x;
-    outY = clamped.y;
-    outZoom = clampZoom(outZoom);
-    outRot = clampRotation(outRot);
+    if (sadComp) {
+      // Hold the figure at the edge; never bias back to center, even at high intensity
+      const biased = biasTowardPoint(outX, outY, rest.x, rest.y, 0.28);
+      const clamped = clampToCenter(biased.x, biased.y, scaleMul, 0.2);
+      outX = clamped.x;
+      outY = clamped.y;
+    } else {
+      const baseBias = cf.active ? 0.34 + reSnap * 0.32 : 0.18 + reSnap * 0.22;
+      const centerBias =
+        rx.eventWeight > 0.02
+          ? baseBias * (1 - rx.eventWeight * 0.85)
+          : baseBias;
+      const toward =
+        hasComp && (Math.abs(rest.x) > 0.4 || Math.abs(rest.y) > 0.4)
+          ? biasTowardPoint(outX, outY, rest.x, rest.y, centerBias)
+          : biasTowardCenter(outX, outY, centerBias);
+      const clamped = clampToCenter(toward.x, toward.y, scaleMul, rx.eventWeight);
+      outX = clamped.x;
+      outY = clamped.y;
+    }
+
+    outZoom = clampZoomToRange(outZoom, lens.zoomMin, lens.zoomMax);
+    const rotCap = Math.max(
+      shakeEff.dutchMax,
+      shakeEff.kickScale > 0 ? 0.015 * shakeEff.kickScale : 0,
+      tiltRad ? Math.abs(tiltRad) : 0
+    );
+    outRot = clampRotation(outRot, rotCap, {
+      hardCap: tiltRad ? COMPOSITION_TILT_MAX : undefined,
+    });
 
     this._prevDrop = drop;
     this._prevBuild = build;

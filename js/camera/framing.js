@@ -11,8 +11,11 @@
  * Cast framing prefers staged figure over random shake; psych slice
  * (build→push earns chorus pull, kick-only shake, dutch tension-only).
  *
- * Travel pass: intentional pan/dolly/crane wander widened so camera moves
- * through the frame; punch envelope stays tight for kick/drop crosshair.
+ * CEO Direction (Nov 24 2026):
+ * - No tracking shots that follow aimless walking (subject stays anchored
+ *   on crosshair; lateral travel wander suppressed).
+ * - Reaction framing: brief reaction push toward world event/focal point,
+ *   then re-crosshair figure.
  */
 
 /** Soft phone-LED wander limits (pre-scaleMul). Subject stays near crosshair. */
@@ -27,11 +30,13 @@ export const ZOOM_MAX = 1.2; // HOLD: room for cast intimate push-in
 
 /**
  * Clamp pan/orbit wander so the subject never leaves LED center.
- * scaleMul widens slightly for larger canvases but stays modest.
+ * When `reactionWeight > 0`, gently widens bounds slightly so sky/focal
+ * reaction pushes read clearly without breaking LED framing.
  */
-export function clampToCenter(x, y, scaleMul = 1) {
-  const sx = FRAME_MAX_X * (0.85 + 0.15 * Math.min(scaleMul, 1.5));
-  const sy = FRAME_MAX_Y * (0.85 + 0.15 * Math.min(scaleMul, 1.5));
+export function clampToCenter(x, y, scaleMul = 1, reactionWeight = 0) {
+  const rxBoost = 1 + 0.32 * Math.max(0, Math.min(1, reactionWeight || 0));
+  const sx = FRAME_MAX_X * (0.85 + 0.15 * Math.min(scaleMul, 1.5)) * rxBoost;
+  const sy = FRAME_MAX_Y * (0.85 + 0.15 * Math.min(scaleMul, 1.5)) * rxBoost;
   return {
     x: Math.max(-sx, Math.min(sx, x)),
     y: Math.max(-sy, Math.min(sy, y)),
@@ -52,12 +57,30 @@ export function biasTowardCenter(x, y, strength = 0.35) {
   return { x: x * (1 - s), y: y * (1 - s) };
 }
 
+/** Bias offsets toward a rest point (composition focal / edge frame). */
+export function biasTowardPoint(x, y, px, py, strength = 0.35) {
+  const s = Math.max(0, Math.min(1, strength));
+  return {
+    x: x * (1 - s) + (px || 0) * s,
+    y: y * (1 - s) + (py || 0) * s,
+  };
+}
+
 export function clampZoom(z) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
 }
 
-export function clampRotation(r) {
-  return Math.max(-FRAME_MAX_ROT, Math.min(FRAME_MAX_ROT, r));
+/** Clamp zoom inside a locked camera style profile's lens envelope. */
+export function clampZoomToRange(z, minZ = ZOOM_MIN, maxZ = ZOOM_MAX) {
+  const lo = Math.max(ZOOM_MIN, minZ);
+  const hi = Math.min(ZOOM_MAX, Math.max(lo, maxZ));
+  return Math.max(lo, Math.min(hi, z));
+}
+
+export function clampRotation(r, maxRot = FRAME_MAX_ROT, opts = {}) {
+  const hard = opts && Number.isFinite(opts.hardCap) ? opts.hardCap : FRAME_MAX_ROT;
+  const cap = Math.min(hard, Math.max(0, maxRot));
+  return Math.max(-cap, Math.min(cap, r));
 }
 
 /** Smoothstep for build→push, dutch ease, whip settle. */
@@ -80,11 +103,11 @@ const CROWD_KINDS = new Set(['crowd_ghosts', 'congregation']);
  * Prefer cast over random shake when kind is active (not none / missing).
  *
  * @param {null|{kind?:string,action?:string,placement?:string,count?:number}} cast
- * @returns {{active:boolean,yBias:number,zoomBias:number,shakeMul:number}}
+ * @returns {{active:boolean,yBias:number,zoomBias:number,shakeMul:number,noTracking:boolean}}
  */
 export function castFraming(cast) {
   if (!cast || cast.kind === 'none') {
-    return { active: false, yBias: 0, zoomBias: 0, shakeMul: 1 };
+    return { active: false, yBias: 0, zoomBias: 0, shakeMul: 1, noTracking: true };
   }
 
   const placement = cast.placement || 'mid';
@@ -130,16 +153,19 @@ export function castFraming(cast) {
     yBias *= 0.7;
   }
 
-  // Action reinforces intimacy / look
+  // Action reinforces intimacy / look (no lateral tracking for walk/run/flee)
   if (action === 'look_up') {
     yBias += 1.2;
   } else if (action === 'kneel') {
     yBias -= 1.8;
     zoomBias += 0.025;
+  } else if (action === 'rise') {
+    yBias += 0.8;
+    zoomBias += 0.015;
   }
 
   // Prefer cast over shake harder — keep silhouette locked
   const shakeMul = 0.42;
 
-  return { active: true, yBias, zoomBias, shakeMul };
+  return { active: true, yBias, zoomBias, shakeMul, noTracking: true };
 }

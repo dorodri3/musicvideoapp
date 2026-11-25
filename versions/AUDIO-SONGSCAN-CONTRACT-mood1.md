@@ -1,3 +1,5 @@
+> **mood3 update:** relative loudness (`energyP10`/`energyP50`/`energyP90`, `sections[].loudness`, live `sectionLoudness`) lives in [`AUDIO-SONGSCAN-CONTRACT-mood3.md`](./AUDIO-SONGSCAN-CONTRACT-mood3.md). This mood1 file is the listening/confidence contract only and is unchanged.
+
 # Audio → Scene contract: song pre-scan + live listening (mood1)
 
 Owner: Audio Pulse · Module: `js/audio/songScan.js` (+ `js/audio/analyzer.js`) · Imports on `?v=mood1`

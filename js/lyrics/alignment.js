@@ -10,7 +10,7 @@
  * Lyrics Brain idgate: setPhrases drops gate-rejected text (never re-spread / shown);
  * noteVocal()/vocalVerdict() = rule 5 live vocal check → lyric-free scenic mode mid-play.
  */
-import { isRejectedLyrics } from './parser.js?v=art8';
+import { isRejectedLyrics } from './parser.js?v=mood4';
 
 /** Rule 5 tuning: window after first timed line, min observed coverage, "almost no vocal". */
 export const VOCAL_CHECK = {

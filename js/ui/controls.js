@@ -111,24 +111,6 @@ export class Controls {
       });
     }
 
-    // art5: the setup screen owns the "home" chip selection (HTML defaults until the user edits
-    // it there). Overlay taps during a show are temporary; resetStylesToSetup() restores this.
-    const setupChips = () => [...this.root.querySelectorAll('[data-style]')].filter(n => !n.closest('.overlay-styles'));
-    this._setupStyles = new Set(setupChips().filter(n => n.classList.contains('active')).map(n => n.dataset.style));
-    this.root.querySelectorAll('[data-style]').forEach(el => {
-      el.addEventListener('click', () => {
-        const style = el.dataset.style;
-        const next = !el.classList.contains('active');
-        // Keep setup-screen and show-overlay chips with the same value in sync.
-        this.root.querySelectorAll('[data-style]').forEach((n) => {
-          if (n.dataset.style === style) n.classList.toggle('active', next);
-        });
-        if (!el.closest('.overlay-styles')) {
-          if (next) this._setupStyles.add(style); else this._setupStyles.delete(style);
-        }
-      });
-    });
-
     const gen = $('btn-generate');
     if (gen) {
       gen.addEventListener('click', () => {
@@ -160,7 +142,7 @@ export class Controls {
     // Also catch taps on the prompt area / show screen chrome (prompt is pointer-events:none)
     if (showScreen) {
       showScreen.addEventListener('click', (e) => {
-        if (e.target?.closest?.('.overlay-btns, .overlay-styles')) return;
+        if (e.target?.closest?.('.overlay-btns')) return;
         this.emit('gesture');
       });
     }
@@ -172,23 +154,21 @@ export class Controls {
     }
   }
 
-  /** art5: put every chip (setup + overlay) back to the setup-screen selection. */
-  resetStylesToSetup() {
-    if (!this._setupStyles) return;
-    this.root.querySelectorAll('[data-style]').forEach((n) => {
-      n.classList.toggle('active', this._setupStyles.has(n.dataset.style));
-    });
-  }
+  /** Style chips removed — app always runs Auto. */
+  resetStylesToSetup() {}
+
+  /** Active style as a one-item array, or [] for Auto (director picks). */
+  _collectStyles() { return []; }
 
   getSettings() {
     const $ = (id) => this.root.getElementById(id);
-    const styles = [...new Set([...this.root.querySelectorAll('[data-style].active')].map(el => el.dataset.style))];
+    const styles = this._collectStyles();
     return {
       lyrics: $('lyrics-input')?.value || '',
       fantasy: $('fantasy-input')?.value || '',
-      mood: $('mood-select')?.value || 'auto',
-      styles: styles.length ? styles : ['cinematic', 'dreamlike'],
-      intensity: $('intensity-select')?.value || 'moderate',
+      mood: 'auto',
+      styles,
+      intensity: 'moderate',
       lyricsOn: $('toggle-lyrics')?.checked !== false,
       charactersOn: $('toggle-characters')?.checked !== false,
       artist: $('artist-input')?.value?.trim() || '',

@@ -15,20 +15,26 @@
  * lyricStickExpire / sectionChangeId: when section TYPE or chorus.repeat changes,
  * Visual Engine / Lyrics Brain clear sticky last-good phrase (Quality gap 5).
  */
-import { NarrativeState } from './narrativeState.js?v=art8';
-import { lineAt, LYRIC_LED_BLOCKED, LYRIC_POOL_INTENSE, LYRIC_POOL_TENDER } from './lyricMood.js?v=art8';
-import { VariationController } from './variation.js?v=art8';
-import { ScaleDirector } from './scale.js?v=art8';
-import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=art8';
-import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=art8';
-import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=art8';
+import { NarrativeState } from './narrativeState.js?v=mood4';
+import { pickStyleFamily, styleKit, clampToStyle, isPresetInStyle, styleGrade, lockedWorlds, peakPresetsInStyle } from '../scene/styleFamilies.js?v=mood4';
+/** Single-select live styles (bot 1 gate list). Anything else = Auto until Works Tester signs it off. */
+const LIVE_STYLE_CHIPS = ['cinematic', 'horror', 'sad'];
+import { ReactionDirector, actionForReaction } from './reaction.js?v=mood4';
+import { autoLook } from './autoLook.js?v=mood4';
+import { CompositionDirector } from './composition.js?v=mood4';
+import { lineAt, LYRIC_LED_BLOCKED, LYRIC_POOL_INTENSE, LYRIC_POOL_TENDER } from './lyricMood.js?v=mood4';
+import { VariationController } from './variation.js?v=mood4';
+import { ScaleDirector } from './scale.js?v=mood4';
+import { castFromConcept, modulateCast, planCastForSection } from './casting.js?v=mood4';
+import { resolveLibraryCast, applyRoleBinding, applyWeaponBinding, applyDanceIntent, ensureCastPresence } from './castLibrary.js?v=mood4';
+import { resolveGenreFamily, applyGenreDefaults, getGenreFamily } from './genreMap.js?v=mood4';
 import {
   dominantVibe, vibePackFamily, vibeLeadPresets, vibeForbiddenPresets, genreLeadPresets,
   genreForbiddenPresets, ladderLeadPresets, resolveLadder, isAggressiveVibe, ladderStepChanged,
   inferSpeechLikeFromRoles, readVibe, readMoment, STICKY_MS, PIN_HOLD_MS, ESCAPE_MS, AGGRESSION_THRESH,
   hardLockPresets, isHardLockPreset, softForbiddenUnderHard, isSoftForbiddenUnderHard
-} from './vibeCast.js?v=art8';
-import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=art8';
+} from './vibeCast.js?v=mood4';
+import { propsForConcept, buildMotifProps, mergeCallbackProp, attachWeaponToMotifProps } from './motifProps.js?v=mood4';
 
 const SECTION_INTENTS = {
   intro: {
@@ -90,8 +96,24 @@ const DEFAULT_PALETTES = {
   melancholic: ['#0c1018', '#1a2838', '#6a8098', '#c8d8e8'],
   euphoric: ['#101028', '#3020a0', '#ff60c0', '#ffe0ff'],
   cinematic: ['#080c14', '#142038', '#c8a060', '#f0e8d8'],
-  dreamlike: ['#100818', '#302060', '#a090e0', '#e8e0ff']
+  dreamlike: ['#100818', '#302060', '#a090e0', '#e8e0ff'],
+  // CEO Nov24 five looks: one palette per locked style (Sad = cold rain blue + one warm window amber)
+  sad: ['#0c0e11', '#1f2428', '#6e777c', '#bcc3c7'], // drained, pale: no warm light (Darrell: warm only when cozy)
+  horror: ['#040506', '#10141a', '#3a4a44', '#e8c47a'],
+  candy_pop: ['#1a0c2a', '#ff6fb5', '#ffd84a', '#7fe7ff'],
+  ember_wasteland: ['#0a0303', '#3a0806', '#ff4a10', '#ffd27a'],
+  cozy: ['#140c08', '#4a2a16', '#e8a050', '#fff0d0']
 };
+const LOOK_PALETTE = { cozy: 'cozy', sad: 'sad', horror: 'horror', cinematic: 'cinematic', candy_pop: 'candy_pop', ember_wasteland: 'ember_wasteland' };
+const LOOK_THEME = {
+  sad: 'Something is missing: one small figure at the edge of a too-empty frame',
+  horror: 'A slow dread unfolding in shadow',
+  cinematic: 'A lone hero at a turning point, facing the horizon',
+  candy_pop: 'A bright day where everyone joins the dance',
+  ember_wasteland: 'A survivor facing the beast in a burning world',
+  cozy: 'Somewhere warm and safe, close to the people who matter'
+};
+const GENERIC_THEMES = new Set(['A cinematic dream traveling through emotion', 'A slow dread unfolding in shadow', '']);
 
 /** Known preset ids (+ desert alias + Worlds CEO packs). Used to filter concept lists. */
 const KNOWN_PRESETS = new Set([
@@ -117,7 +139,8 @@ const KNOWN_PRESETS = new Set([
  */
 const STYLE_PRESET_BUNDLES = {
   realistic: ['meadow_fauna', 'country_porch', 'forest', 'cozy_autumn'],
-  cinematic: ['rainy_city', 'ancient_ruins', 'ocean', 'empty_highway', 'storm', 'apocalyptic_warzone', 'metal_hall'],
+  cinematic: ['cathedral_space', 'space', 'misty_lake', 'dream_clouds', 'storm'],
+  sad: ['misty_lake', 'rainy_city', 'snow', 'ocean', 'empty_highway'],
   surreal: ['endless_staircase', 'white_void', 'candy_happy', 'dream_clouds', 'reality_fracture', 'red_void'],
   dreamlike: ['dream_clouds', 'misty_lake', 'space', 'ocean', 'reality_fracture', 'storm', 'forest', 'meadow_fauna', 'red_void'], // art3: + enchanted forest / meadow (soft), red eclipse void (hard)
   mythological: ['ancient_ruins', 'cathedral_space', 'ocean', 'snow', 'storm', 'apocalyptic_warzone'],
@@ -279,6 +302,9 @@ export class ScenePlanner {
     this._lastTrackKey = null;
     this._hardHud = null;
     this._pinAsserted = false;
+    /** CEO P0 Nov24: one look per track (chip sets; tap replaces for rest of track). */
+    this._look = null; this._lookSource = null; this._lookPending = false; this._lookFirstAt = 0; this._lookScores = null; this._compE = null; this._variant = null; this._aud = null;
+    this.reaction = new ReactionDirector(); this.composition = new CompositionDirector();
     /** HOLD-stylechips: mood chip holds one world until soft↔hard. */
     this._styleHoldUntil = 0;
     this._styleHeldPreset = null;
@@ -336,7 +362,7 @@ export class ScenePlanner {
     this._styleRecent = []; this._styleLastTap = null; // art5: chip tap recency is per show
     // art4: new show → fresh song polarity lock + hysteresis
     this._songPol = null; this._songPolTrack = undefined; this._polTrack = undefined;
-    this._lyricMood = opts?.lyricMood || null; this._lyr = null; // art7: lyrics-first direction profile (per song)
+    this._lyricMood = opts?.lyricMood || null; this._storyRead = opts?.storyRead || null; this.songScan = opts?.songScan || null; this._aud = null; this._lyr = null; this.composition?.reset(); // art7: lyrics-first direction profile (per song)
 
     // Peaceful/calm or nature language must seed the nature world before roulette.
     const moodKey = String(mood || '').toLowerCase();
@@ -528,6 +554,7 @@ export class ScenePlanner {
     }
     if (primary) return primary.imageryPick || primary.id;
     if (styles.includes('horror')) return 'A slow dread unfolding in shadow';
+    if (styles.includes('sad')) return LOOK_THEME.sad;
     if (styles.includes('mythological')) return 'A myth retold in light and storm';
     return 'A cinematic dream traveling through emotion';
   }
@@ -537,6 +564,8 @@ export class ScenePlanner {
     if (primary?.mood?.darkness > 0.65) return DEFAULT_PALETTES.dark;
     if (primary?.mood?.hope > 0.65) return DEFAULT_PALETTES.hopeful;
     if (primary?.mood?.aggression > 0.6) return DEFAULT_PALETTES.aggressive;
+    if (styles.includes('sad')) return DEFAULT_PALETTES.sad;
+    if (styles.includes('horror')) return DEFAULT_PALETTES.horror;
     if (styles.includes('dreamlike') || styles.includes('surreal')) return DEFAULT_PALETTES.dreamlike;
     return DEFAULT_PALETTES.cinematic;
   }
@@ -1425,6 +1454,9 @@ export class ScenePlanner {
       this._hotSince = 0;
       this._packHoldUntil = 0;
       this._lastTrackKey = trackKey;
+      // CEO P0: new track → pick a fresh look once (kept for the whole song)
+      this._look = null; this._lookSource = null; this._lookPending = false; this._lookFirstAt = 0; this._lookScores = null; this._compE = null; this._variant = null; this._aud = null;
+      try { this.reaction.reset(); this.composition?.reset(); } catch (_) { /* soft */ }
     }
 
     // HOLD-0321/0338/0346: softBedGuard — !martial/!orchMart soft energy wins.
@@ -1944,8 +1976,110 @@ export class ScenePlanner {
       }
     }
 
+    // CEO P0 Nov24 — ONE STYLE PER TRACK (Worlds styleFamilies): pick once, clamp every world into it.
+    // Style lock WINS over hardOnly: a soft-locked track that spikes uses its own family's peak worlds.
+    // CEO Nov24 AUTO five-look mapper: pop→Happy, metal/hard→Heavy, ballad/sad lyrics→Sad, dark/eerie→Horror, big/wide→Cinematic.
+    // Chip tap wins. Auto auditions ≤6s of intro (stylePending) then locks ONCE for the track.
+    {
+      const st = Array.isArray(this.plan?.styles) ? this.plan.styles : [];
+      const chip = st.find(s => LIVE_STYLE_CHIPS.includes(s)) || null;
+      if (chip) {
+        if (!this._look || this._lookSource !== 'chip:' + chip) { this._look = pickStyleFamily({ chip }); this._variant = null; this._lookSource = 'chip:' + chip; this._lookAt = now; }
+        this._lookPending = false;
+      } else if (!this._look || this._lookPending) {
+        if (!this._lookFirstAt || !this._look) this._lookFirstAt = this._lookFirstAt || now;
+        const gm = this._lastGenreMeta || {};
+        const genre = gm.id || gm.family || gm.genreFamily || audio?.genreFamily || audio?.genreHint || '';
+        const LM = this._lyricMood || {};
+        // P0 (bot 1, Nov24): audition the song, not the intro. Accumulate ~20s of evidence, then lock once.
+        const A = this._aud || (this._aud = { n: 0, eSum: 0, ePeak: 0, eEma: 0, aggMax: 0, vibes: {}, startT: ctx.time ?? 0, strong: false });
+        const tNow = +(ctx.time ?? 0);
+        const eRaw = +energyN || 0;
+        A.eEma = A.n ? A.eEma * 0.9 + eRaw * 0.1 : eRaw;
+        if (tNow - A.startT >= 3) { A.n++; A.eSum += eRaw; A.ePeak = Math.max(A.ePeak, A.eEma); }
+        const aggNow = Math.max(+(audio?.aggression || 0), +(audio?.vibe?.aggression || 0), +(vibeDom?.vibe?.aggression || 0));
+        A.aggMax = Math.max(A.aggMax, aggNow); A.aggSum = (A.aggSum || 0) + aggNow; A.aggN = (A.aggN || 0) + 1;
+        const vf = vibeDom?.family || audio?.vibe?.family || '';
+        if (vf) A.vibes[vf] = (A.vibes[vf] || 0) + 1;
+        if (/chorus|drop|hook|climax/i.test(String(secType || '')) || A.eEma >= 0.62) A.strong = true;
+        const vibeList = Object.entries(A.vibes).sort((a, b) => b[1] - a[1]);
+        const vTot = vibeList.reduce((x, y) => x + y[1], 0) || 1;
+        const nonPeace = vibeList.find(([k]) => k !== 'peaceful' && k !== 'neutral' && k !== 'spoken');
+        const vibeAud = nonPeace && nonPeace[1] / vTot >= 0.3 ? nonPeace[0] : (vibeList[0]?.[0] || vf);
+        const eAud = A.n ? Math.max(A.eSum / A.n, A.ePeak * 0.8) : eRaw;
+        const scanRaw = this.songScan || globalThis.__LS_SONGSCAN__ || null;
+        const scanOk = scanRaw && scanRaw.ok !== false ? scanRaw : null;
+        // bot 1: on the no-scan fallback the hard pin only wins if aggression AVERAGED over the hold is >= 0.6 (orchestral -> Cinematic)
+        const aggAvg = A.aggN ? A.aggSum / A.aggN : aggNow;
+        const hardPin = scanOk ? !!hardOnly : (!!hardOnly && aggAvg >= 0.6);
+        const story = (typeof globalThis !== 'undefined' && globalThis.__LS_STORYREAD__) || this._storyRead || null;
+        const res = autoLook({ packFamily: this.narrative.getPackFamily?.() || null, preset: emitPreset,
+          genre, vibeFamily: vibeAud, lyricMood: LM.mood || '', anguish: LM.anguish || 0, lyricLed: !!LM.led, storyRead: story, songScan: scanOk,
+          energy: eAud, aggression: Math.max(A.aggMax * 0.85, aggNow), harsh: Math.max(+(audio?.harsh || 0), +(audio?.harshness || 0), +(audio?.roles?.harsh || 0)),
+          scary: Math.max(+(vibeDom?.vibe?.scary || 0), +(audio?.vibe?.scary || 0)), tense: Math.max(+(vibeDom?.vibe?.tense || 0), +(audio?.vibe?.tense || 0)),
+          hardOnly: hardPin, softClear: !!softBedGuard
+        });
+        const played = tNow - A.startT;
+        const settle = !!scanOk || played >= 20 || (A.strong && played >= 8) || (hardPin && played >= 4); // scan = whole song known at 0s → lock now
+        if (!this._look || this._look !== res.look) { this._look = res.look; this._lookAt = now; }
+        this._variant = res.variant || null;
+        this._lookSource = 'auto';
+        this._lookScores = { ...res.inputs, auditionSec: +played.toFixed(1), strong: A.strong, aggAvg: +aggAvg.toFixed(2), hardPin };
+        this._lookPending = !settle;
+      }
+    }
+    {
+      const lk = this._look;
+      const intense = !!hardOnly || fireEvents.includes('collapse') || fireEvents.includes('white_flash');
+      const pool = lockedWorlds(lk);
+      const keep = pool.includes(this.currentPreset) ? this.currentPreset : null;
+      let clamped = clampToStyle(emitPreset, lk, { intense });
+      // hard peak inside the style: prefer the family's peak worlds over leaving the style
+      if (hardOnly && !pool.includes(emitPreset)) {
+        const pk = peakPresetsInStyle(lk).filter(x => pool.includes(x));
+        clamped = (keep && pk.includes(keep)) ? keep : (pk[0] || clamped);
+      }
+      if (clamped !== emitPreset) {
+        emitPreset = clamped;
+        this.currentPreset = clamped;
+      }
+      if (this._hardHud) { this._hardHud.preset = emitPreset; this._hardHud.presetOk = !hardOnly || hardLockPresets().includes(emitPreset) || isPresetInStyle(emitPreset, lk); }
+      if (!pool.includes(emitPrev)) emitPrev = emitPreset;
+      if (emitTr) {
+        if (!pool.includes(emitTr.to)) emitTr.to = emitPreset;
+        if (!pool.includes(emitTr.from)) emitTr.from = emitTr.to;
+        if (emitTr.from === emitTr.to) emitTr = null;
+      }
+    }
+    const styleLook = this._look;
+    const styleGradeV = styleGrade(styleLook);
+    const holdNeutral = !!this._lookPending; // P0: only for live/mic input with no scan. Living neutral scene (music motion + lyrics) until latch, then ONE reveal
+    const styleKitV = holdNeutral ? null : styleKit(styleLook);
+    let compositionV = null;
+    try { compositionV = this.composition.tick({ look: styleLook, variant: this._variant || null, energy: energyN, bpm: +(audio?.bpm || audio?.tempo || 0), lyricMood: this._lyricMood?.mood || null, sectionId: (secType || '') + ':' + (section?.start ?? ''), now, time: +(ctx.time ?? 0), scan: this.songScan || globalThis.__LS_SONGSCAN__ || null, loudness: audio?.sectionLoudness ?? audio?.moment?.sectionLoudness ?? audio?.vibe?.moment?.sectionLoudness ?? null, loudSrc: audio?.sectionLoudnessSource || audio?.moment?.sectionLoudnessSource || null }); } catch (_) { compositionV = null; }
+    this._compMode = compositionV?.mode || null;
+    if (holdNeutral) palette = ['#14161c', '#3a4150', '#8a93a6', '#e6e9f0']; // living neutral (Works Tester): not a dim screen
+    else if (LOOK_PALETTE[styleLook]) palette = DEFAULT_PALETTES[LOOK_PALETTE[styleLook]];
+    const lookTheme = (GENERIC_THEMES.has(this.plan.theme || '') || /^[a-z_]+$/.test(this.plan.theme || '')) && LOOK_THEME[styleLook] && !holdNeutral ? LOOK_THEME[styleLook] : this.plan.theme;
+    try { globalThis.__LS_LOOK__ = { styleLock: styleLook, stylePending: !!this._lookPending, autoInputs: this._lookScores || null, styleVariant: this._variant || null, styleSource: this._lookSource, styleLatchedAt: this._lookAt, look: styleLook, preset: emitPreset, track: this._lastTrackKey }; } catch (_) { /* soft */ }
+
+    // CEO P0 Nov24 — CHARACTER REACTS TO THE WORLD (no aimless walking)
+    let reaction = null;
+    try {
+      reaction = this.reaction.tick({
+        now, preset: emitPreset, events: fireEvents, hardOnly: !!hardOnly, sectionType: secType,
+        energy: energyN, kick: kickN, drop: dropN, onset: onsetN, beat: !!(audio?.beat || audio?.roles?.beat),
+        style: styleLook, kit: styleKitV, lyric: activePhrase?.text || ''
+      });
+    } catch (_) { reaction = null; }
+    if (reaction) {
+      const noWalk = new Set(['walk', 'run', 'step', 'flee', 'travel', 'wander', undefined, null, '']);
+      const fix = c => { if (!c || typeof c !== 'object') return; if (reaction.locomotion) c.action = 'walk'; else if (noWalk.has(c.action) || reaction.why !== 'idle') c.action = actionForReaction(reaction.verb); c.locomotion = !!reaction.locomotion; c.reaction = reaction; if (styleKitV && !c.kitFigure) { c.kitFigure = styleKitV.figure; c.kitRole = styleKitV.figure?.role; } };
+      if (Array.isArray(cast)) cast.forEach(fix); else fix(cast);
+    }
+
     return {
-      theme: this.plan.theme,
+      theme: lookTheme,
       preset: emitPreset,
       previousPreset: emitPrev,
       transition: emitTr,
@@ -1971,6 +2105,11 @@ export class ScenePlanner {
       // Vibe routing owns the active family; preset overlaps (meadow/autumn,
       // storm/warzone) must not hide a live peaceful/chaotic assignment.
       packFamily: hardOnly ? 'chaos' : (this.narrative.getPackFamily() || familyOfPreset(emitPreset)),
+      // CEO P0 Nov24: Visual holds ONE grade/look for the track; Scene keeps worlds inside it
+      focal: reaction ? { u: reaction.gazeU, v: reaction.gazeV, x: reaction.gazeU, y: reaction.gazeV, target: reaction.target, why: reaction.why } : null,
+      styleLook, styleLock: styleLook, stylePending: !!this._lookPending, styleFamily: styleLook, styleKit: styleKitV, composition: holdNeutral ? { neutralHold: true, mode: compositionV?.mode || 'quiet', intensity: compositionV?.intensity ?? 0.4, motionMul: compositionV?.motionMul ?? 0.5, energy: compositionV?.energy ?? null, focal: 'center', focalU: 0.5, focalV: 0.6, why: 'live-input audition: music-driven, lyrics on' } : compositionV, neutralHold: holdNeutral, kitProps: styleKitV ? { fx: styleKitV.fx, motifs: styleKitV.motifs, fauna: styleKitV.fauna, never: styleKitV.never } : null, kitFigure: styleKitV?.figure || null, styleVariant: this._variant || null, styleSource: this._lookSource, styleLatchedAt: this._lookAt || 0, styleGrade: styleGradeV, styleLookMembers: lockedWorlds(styleLook),
+      // CEO P0 Nov24: figure reacts (locomotion:false, verb, gazeU/V, sway) — Visual poses
+      reaction,
       // HOLD-0321 proof HUD — Works Tester: directive + console __LS_HARD__
       hardOnly: !!hardOnly,
       hardLock: !!hardOnly,
@@ -1985,7 +2124,7 @@ export class ScenePlanner {
       martial: !!(vibeDom?.martial || audio?.vibe?.martial || momentLive?.martial),
       orchestralMartial: !!(vibeDom?.orchestralMartial || audio?.vibe?.orchestralMartial || momentLive?.orchestralMartial),
       hardHud: this._hardHud || null,
-      presetOk: !hardOnly || hardLockPresets().includes(emitPreset),
+      presetOk: !hardOnly || hardLockPresets().includes(emitPreset) || isPresetInStyle(emitPreset, styleLook),
       hardLockIds: hardLockPresets(),
 
       // Character presence (Worlds placement: sky | mid | foreground)
@@ -2598,6 +2737,11 @@ export class ScenePlanner {
     // bundle head — and the world we jump to — is the TAPPED chip's first world in the current
     // mood; the other selected chips stay in the bundle for rotation afterwards.
     const tapped = opts && opts.tapped ? String(opts.tapped).trim().toLowerCase() : '';
+    // CEO Nov24: ONE style at a time. A tap replaces the pick; only live chips count (else Auto).
+    {
+      const pickOne = (tapped && list.includes(tapped)) ? tapped : (tapped && !list.includes(tapped) ? null : list[list.length - 1]);
+      list = pickOne && LIVE_STYLE_CHIPS.includes(pickOne) ? [pickOne] : [];
+    }
     if (!Array.isArray(this._styleRecent)) this._styleRecent = [];
     if (tapped && list.includes(tapped)) this._styleRecent = [tapped, ...this._styleRecent.filter(x => x !== tapped)];
     this._styleRecent = this._styleRecent.filter(x => list.includes(x));
@@ -2621,6 +2765,13 @@ export class ScenePlanner {
     }
     this._styleHoldUntil = 0;
     this._styleHeldPreset = null;
+    // CEO P0: a chip tap REPLACES the track look for the rest of the song
+    if (tapped) {
+      // a tap (or untap → Auto) re-picks the style once, then it holds for the rest of the track
+      this._look = list[0] ? pickStyleFamily({ chip: list[0] }) : null;
+      this._lookSource = list[0] ? 'chip:' + list[0] : null;
+      this._lookAt = 0;
+    }
     const hardOnly = !!(this._hardHud && this._hardHud.hardOnly);
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     this._enforceStyleWorld(now, hardOnly);

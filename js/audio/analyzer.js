@@ -2,7 +2,8 @@ import {
   resolveExplicitGenre,
   leanGenreFromAudio,
   HARSH_PROTECTED
-} from './genreFamily.js?v=mood1';
+} from './genreFamily.js?v=mood4';
+import { perceivedLoudness, relativeLoudness } from './songScan.js?v=mood4';
 
 /**
  * Audio analyzer: RMS, peak, centroid, flux, bass/mid/treble,
@@ -62,6 +63,7 @@ export class AudioAnalyzer {
     // mood1: full-song pre-scan prior (songScan.js) + live 'still listening' state
     this._songScan = null;
     this._resetListen();
+    this._resetLoudness();
     // Instrument envelope smoothers
     this._inst = {
       kick: 0, bass: 0, snare: 0, hats: 0, pads: 0, lead: 0, harsh: 0
@@ -122,7 +124,8 @@ export class AudioAnalyzer {
         drop: 0, build: 0, beat: false, onset: 0, onsetFast: 0, energy: 0,
         aggression: 0, aggressionLock: false, forbidPastoral: false,
         martial: false, orchestralMartial: false, pinArmed: false,
-        softClear: false, hardOnly: false, ladder: 'peaceful'
+        softClear: false, hardOnly: false, ladder: 'peaceful',
+        sectionLoudness: 0, sectionLoudnessSource: 'live'
       },
       pinArmed: false,
       hardOnly: false,
@@ -144,7 +147,9 @@ export class AudioAnalyzer {
       listenProgress: 0,
       listenReason: null,
       scanReady: false,
-      scanVibe: null
+      scanVibe: null,
+      sectionLoudness: 0,
+      sectionLoudnessSource: 'live'
     };
   }
 
@@ -153,6 +158,76 @@ export class AudioAnalyzer {
     this._listen = {
       lastT: null, audibleMs: 0, speechMs: 0, strongMs: 0,
       done: false, reason: null, doneAt: null
+    };
+  }
+
+  /** mood3: per-track relative-loudness smoothers + live percentile fallback. */
+  _resetLoudness() {
+    this._loudMs = 0;        // mean-square RMS, tau ≈ 1.5 s
+    this._loudSmooth = 0;    // perceivedLoudness of _loudMs
+    this._loudInited = false;
+    this._loudLastT = null;
+    this._liveLoudSecs = [];
+    this._liveSecAcc = 0;
+    this._liveSecW = 0;
+    this._liveP10 = 0.2;
+    this._liveP90 = 0.8;
+  }
+
+  /**
+   * mood3: 1.5 s smoothed perceived energy mapped through the song's energyP10..P90.
+   * Mic / no-scan: rolling 60 s of 1 s energies → live p10/p90 (source = 'live').
+   * Does not touch pin / softClear / martial.
+   */
+  _updateSectionLoudness(now, { rms, flux, silence }) {
+    // Smooth mean-square RMS over ~1.5 s (steady, not flickery), then dB-map.
+    // Same perceivedLoudness scale as scan.energyP10..P90 (no flux blend).
+    const ms = (rms || 0) * (rms || 0);
+    const dt = this._loudLastT == null ? 0.016 : Math.max(0.001, Math.min(0.1, (now - this._loudLastT) / 1000));
+    this._loudLastT = now;
+    const tau = 1.5;
+    const a = 1 - Math.exp(-dt / tau);
+    if (!this._loudInited) {
+      this._loudMs = ms;
+      this._loudInited = true;
+    } else {
+      this._loudMs += (ms - this._loudMs) * a;
+    }
+    this._loudSmooth = perceivedLoudness(Math.sqrt(Math.max(0, this._loudMs)));
+
+    const scan = this._songScan;
+    let p10, p90, source;
+    if (scan && scan.ok && Number.isFinite(scan.energyP10) && Number.isFinite(scan.energyP90)) {
+      p10 = scan.energyP10;
+      p90 = scan.energyP90;
+      source = 'scan';
+    } else {
+      if (!silence) {
+        this._liveSecAcc += this._loudSmooth * dt;
+        this._liveSecW += dt;
+        if (this._liveSecW >= 1) {
+          this._liveLoudSecs.push(this._liveSecAcc / this._liveSecW);
+          if (this._liveLoudSecs.length > 60) this._liveLoudSecs.shift();
+          this._liveSecAcc = 0;
+          this._liveSecW = 0;
+          if (this._liveLoudSecs.length >= 4) {
+            const sorted = this._liveLoudSecs.slice().sort((x, y) => x - y);
+            const at = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
+            this._liveP10 = at(0.10);
+            this._liveP90 = at(0.90);
+          }
+        }
+      }
+      p10 = this._liveP10;
+      p90 = this._liveP90;
+      source = 'live';
+    }
+    const sectionLoudness = relativeLoudness(this._loudSmooth, p10, p90);
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    return {
+      sectionLoudness: r3(sectionLoudness),
+      sectionLoudnessSource: source,
+      sectionEnergy: r3(this._loudSmooth)
     };
   }
 
@@ -525,6 +600,11 @@ export class AudioAnalyzer {
       listenProgress: L.progress
     });
 
+    const loud = this._updateSectionLoudness(now, { rms, flux, silence });
+    moment.sectionLoudness = loud.sectionLoudness;
+    moment.sectionLoudnessSource = loud.sectionLoudnessSource;
+    vibe.moment = moment;
+
     this.frame = {
       rms, peak, centroid, flux,
       bass, mid, treble,
@@ -556,7 +636,9 @@ export class AudioAnalyzer {
       listenProgress: L.progress,
       listenReason: L.reason,
       scanReady: !!this._songScan,
-      scanVibe: this._songScan ? this._songScan.vibe : null
+      scanVibe: this._songScan ? this._songScan.vibe : null,
+      sectionLoudness: loud.sectionLoudness,
+      sectionLoudnessSource: loud.sectionLoudnessSource
     };
     return this.frame;
   }
@@ -1170,6 +1252,7 @@ export class AudioAnalyzer {
     this._pinProof = null;
     // mood1: new track → listen again; seed ladder from pre-scan prior if present
     this._resetListen();
+    this._resetLoudness();
     this._genreHint = 'unknown';
     const prior = this._songScan && this._songScan.ladder;
     if (prior && prior !== 'spoken') this._ladderSticky = prior;

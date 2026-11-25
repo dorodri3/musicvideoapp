@@ -1,4 +1,5 @@
-import { getMotionComfort } from '../a11y/motionPrefs.js?v=art8';
+import { getMotionComfort } from '../a11y/motionPrefs.js?v=mood4';
+/** style1: renderer sets lighting.styleColors = VISUAL_STYLES[id].light → one palette per track (hard/soft change alpha only). */
 /**
  * Lighting: washes, shafts, bloom, white-out, silhouette, pulse.
  * Soft-clipped LED bloom + A11y getMotionComfort (HOLD-2142 comfort).
@@ -203,8 +204,9 @@ export class LightingSystem {
       const b = Math.min(0.35, light.bloom);
       const g1 = ctx.createRadialGradient(w / 2, h * 0.4, 8, w / 2, h * 0.4, w * 0.55);
       // HOLD-0330: cold steel / ash-red — NEVER warm pastoral peach bloom
-      g1.addColorStop(0, `rgba(180,210,240,${Math.min(0.06, b * 0.1)})`);
-      g1.addColorStop(0.45, `rgba(100,20,28,${Math.min(0.1, b * 0.16)})`);
+      const SCb = this.styleColors;
+      g1.addColorStop(0, SCb ? `rgba(${SCb.bloom},${Math.min(0.06, b * 0.1)})` : `rgba(180,210,240,${Math.min(0.06, b * 0.1)})`);
+      g1.addColorStop(0.45, SCb ? `rgba(${SCb.edgeL},${Math.min(0.1, b * 0.16)})` : `rgba(100,20,28,${Math.min(0.1, b * 0.16)})`);
       g1.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g1;
       ctx.fillRect(0, 0, w, h);
@@ -240,9 +242,9 @@ export class LightingSystem {
       (light.modes.includes('bloom') && light.bloom > 0.35)
     ) {
       const shaftA = Math.min(0.07, 0.03 + light.bloom * 0.05 + light.pulse * 0.025);
-      ctx.fillStyle = hardApply
+      ctx.fillStyle = this.styleColors ? `rgba(${this.styleColors.shaft},${shaftA + (hardApply ? 0.02 : 0)})` : (hardApply
         ? `rgba(160,190,220,${shaftA + 0.02})`
-        : `rgba(255,245,220,${shaftA})`;
+        : `rgba(255,245,220,${shaftA})`);
       for (let i = 0; i < 3; i++) {
         const x = w * (0.28 + i * 0.22);
         ctx.beginPath();
@@ -290,7 +292,11 @@ export class LightingSystem {
     const bloomBoost = Math.min(0.45, (light.bloom || 0) * 0.38 + (light.pulse || 0) * 0.22);
     if (bloomBoost < 0.05 && !light.modes.includes('wash') && !light.modes.includes('bloom')) {
       const eg = ctx.createLinearGradient(0, 0, w, 0);
-      if (hardLed) {
+      if (this.styleColors) {
+        eg.addColorStop(0, `rgba(${this.styleColors.edgeL},${hardLed ? 0.08 : 0.045})`);
+        eg.addColorStop(0.5, 'rgba(0,0,0,0)');
+        eg.addColorStop(1, `rgba(${this.styleColors.edgeR},${hardLed ? 0.08 : 0.045})`);
+      } else if (hardLed) {
         eg.addColorStop(0, 'rgba(160,30,24,0.08)');
         eg.addColorStop(0.5, 'rgba(0,0,0,0)');
         eg.addColorStop(1, 'rgba(40,20,70,0.08)');
@@ -308,12 +314,13 @@ export class LightingSystem {
     // Edge wash — hard → storm red/ash, never pastel pastoral
     const edgeA = Math.min(0.12, 0.05 + bloomBoost * 0.1);
     const left = ctx.createLinearGradient(0, 0, w * 0.12, 0);
-    left.addColorStop(0, hardLed ? `rgba(160,40,30,${edgeA + 0.04})` : `rgba(100,180,255,${edgeA})`);
+    const SCe = this.styleColors;
+    left.addColorStop(0, SCe ? `rgba(${SCe.edgeL},${edgeA + (hardLed ? 0.04 : 0)})` : hardLed ? `rgba(160,40,30,${edgeA + 0.04})` : `rgba(100,180,255,${edgeA})`);
     left.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = left;
     ctx.fillRect(0, 0, w * 0.12, h);
     const right = ctx.createLinearGradient(w, 0, w * 0.88, 0);
-    right.addColorStop(0, hardLed ? `rgba(60,30,80,${edgeA + 0.04})` : `rgba(255,100,180,${edgeA})`);
+    right.addColorStop(0, SCe ? `rgba(${SCe.edgeR},${edgeA + (hardLed ? 0.04 : 0)})` : hardLed ? `rgba(60,30,80,${edgeA + 0.04})` : `rgba(255,100,180,${edgeA})`);
     right.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = right;
     ctx.fillRect(w * 0.88, 0, w * 0.12, h);

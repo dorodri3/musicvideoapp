@@ -4,7 +4,7 @@
  * Candidates scored by duration + name similarity; prefers synced lyrics.
  * Lyrics Brain idgate (20261019): song-ID sanity gate (rules 1-4) + offline .lrc fallback.
  */
-import { cleanTitle, cleanArtist } from '../song/identity.js?v=art8';
+import { cleanTitle, cleanArtist } from '../song/identity.js?v=mood4';
 
 const TIMESTAMP_RE = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
 const LRC_LINE_RE = /^((?:\[\d{1,2}:\d{2}(?:\.\d{1,3})?\])+)\s*(.*)$/;
@@ -610,10 +610,16 @@ export class LyricsParser {
       || (doc?.baseURI)
       || (typeof location !== 'undefined' ? location.href : null);
     if (base) {
+      // Quiet probe: read each dir's index.json ONCE (cached), then fetch only listed files.
+      // No blind per-stem GETs, so missing lyrics never produce browser 404 errors.
       for (const dir of OFFLINE_LRC_DIRS) {
+        const listed = await this._offlineIndex(dir, base);
+        if (!listed.size) continue;
         for (const stem of stems) {
+          const file = listed.get(stem.toLowerCase());
+          if (!file) continue;
           let url;
-          try { url = new URL(dir + encodeURIComponent(stem) + '.lrc?v=art8', base).href; } catch { continue; } // art8: cache-tagged asset fetch
+          try { url = new URL(dir + encodeURIComponent(file), base).href; } catch { continue; }
           try {
             const res = await fetchWithTimeout(url, OFFLINE_TIMEOUT_MS, 'text/plain, */*');
             if (!res.ok) continue;
@@ -631,6 +637,31 @@ export class LyricsParser {
       if (r) { r.source = 'manual'; return r; }
     }
     return null;
+  }
+
+  /**
+   * Offline .lrc index for one dir: `<dir>index.json` = ["Artist_-_Title.lrc", ...].
+   * Fetched once per dir per session; a missing/bad index means "no offline files" (silent).
+   * @returns {Promise<Map<string,string>>} lowercased stem -> filename
+   */
+  async _offlineIndex(dir, base) {
+    this._offlineIdx = this._offlineIdx || new Map();
+    if (this._offlineIdx.has(dir)) return this._offlineIdx.get(dir);
+    const p = (async () => {
+      const map = new Map();
+      try {
+        const res = await fetchWithTimeout(new URL(dir + 'index.json', base).href, OFFLINE_TIMEOUT_MS, 'application/json');
+        if (!res.ok) return map;
+        const list = await res.json();
+        for (const f of (Array.isArray(list) ? list : list?.files || [])) {
+          const name = String(f || '');
+          if (/\.(lrc|txt)$/i.test(name)) map.set(name.replace(/\.[a-z0-9]{2,5}$/i, '').toLowerCase(), name);
+        }
+      } catch { /* no index: no offline files */ }
+      return map;
+    })();
+    this._offlineIdx.set(dir, p);
+    return p;
   }
 
   _wrapOfflineText(text, { title = '', artist = '' } = {}) {

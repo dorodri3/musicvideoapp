@@ -1,7 +1,7 @@
-import { resolveExplicitGenre } from './genreFamily.js?v=mood1';
+import { resolveExplicitGenre } from './genreFamily.js?v=mood4';
 
 /**
- * Full-song PRE-SCAN (Audio Pulse, mood1).
+ * Full-song PRE-SCAN (Audio Pulse, mood3).
  * Runs once at Generate on the decoded file so Scene can lock a style at 0s
  * instead of guessing from a quiet intro. Contract: ./ROLES.md § "Song pre-scan".
  *
@@ -13,7 +13,7 @@ import { resolveExplicitGenre } from './genreFamily.js?v=mood1';
  * (sections then come from a coarse whole-song RMS pass).
  */
 
-export const SONGSCAN_VERSION = 'songscan-mood1-1';
+export const SONGSCAN_VERSION = 'songscan-mood3-1';
 
 const TARGET_SR = 22050;
 const WIN = 1024;
@@ -21,6 +21,33 @@ const HOP = 512;
 const CHUNK_FRAMES = 192;
 
 const clamp01 = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+
+/** Minimum p90−p10 span so a flat/mastered song doesn't explode relative loudness. */
+export const LOUDNESS_MIN_SPAN = 0.06;
+
+/**
+ * RMS loudness 0..1 (dB-mapped: −30 dBFS → 0, −8 dBFS → 1).
+ * Canonical scale for energyP10/P50/P90, section.loudness, and live sectionLoudness.
+ * (energyMean / energyPeak also blend in spectral flux; do not mix those with p10..p90.)
+ */
+export function perceivedLoudness(rms) {
+  const db = 20 * Math.log10(Math.max(0, rms) + 1e-6);
+  return clamp01((db + 30) / 22);
+}
+
+/** Perceived 1s energy used by energyMean (loudness + spectral activity). */
+export function perceivedEnergy(rms, fluxNorm = 0) {
+  const fluxTerm = clamp01(((fluxNorm || 0) - 0.1) / 0.2);
+  return clamp01(perceivedLoudness(rms) * 0.6 + fluxTerm * 0.4);
+}
+
+/** Map an energy value through a song's p10..p90 → 0..1, clamped. */
+export function relativeLoudness(energy, p10, p90, minSpan = LOUDNESS_MIN_SPAN) {
+  const lo = Number(p10) || 0;
+  const hi = Number(p90) || 0;
+  const span = Math.max(minSpan, hi - lo);
+  return clamp01(((Number(energy) || 0) - lo) / span);
+}
 const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 // Yield to the event loop between chunks (MessageChannel: no 4 ms timer clamp)
 const yieldTick = (() => {
@@ -120,7 +147,7 @@ export async function analyzePCM(channels, sampleRate, opts = {}) {
   const duration = pcm.length / sr;
   if (!(duration >= 3)) {
     onProgress(1);
-    return { version: SONGSCAN_VERSION, ok: false, reason: 'too-short', duration: +(duration || 0).toFixed(2), genreConf: 0, vibeConf: 0, sections: [] };
+    return { version: SONGSCAN_VERSION, ok: false, reason: 'too-short', duration: +(duration || 0).toFixed(2), genreConf: 0, vibeConf: 0, energyP10: 0, energyP50: 0, energyP90: 0, sections: [] };
   }
 
   // Coarse RMS pass (1 s blocks) — whole-song sections in sampled fallback
@@ -287,9 +314,23 @@ function summarize(F, n, fps, ctx) {
   let crestDb = 0;
   { let pk = 0, ss = 0; for (let i = 0; i < n; i++) { pk = Math.max(pk, rms[i]); ss += rms[i] * rms[i]; } crestDb = 20 * Math.log10((pk + 1e-6) / (Math.sqrt(ss / Math.max(1, n)) + 1e-6)); }
   const loudSecs = Array.from(secE).filter((e, i) => secDb[i] > -38);
-  const energyMean = loudSecs.length ? mean(loudSecs) : mean(secE);
+  const energyPool = loudSecs.length ? loudSecs : Array.from(secE);
+  const energyMean = mean(energyPool);
   const energyPeak = percentile(secE, 0.95);
-  const energyLow = percentile(loudSecs.length ? loudSecs : secE, 0.15);
+  const energyLow = percentile(energyPool, 0.15);
+  // mood3: relative-loudness percentiles over audible 1s RMS loudness (dB-mapped).
+  // Not flux-blended: live sectionLoudness can only see RMS, and must share this scale.
+  const secLoud = Float32Array.from(secDb, (d) => clamp01((d + 30) / 22));
+  const loudPool = Array.from(secLoud).filter((_, i) => secDb[i] > -38);
+  const pPool = loudPool.length ? loudPool : Array.from(secLoud);
+  let energyP10 = percentile(pPool, 0.10);
+  let energyP50 = percentile(pPool, 0.50);
+  let energyP90 = percentile(pPool, 0.90);
+  if (energyP90 - energyP10 < LOUDNESS_MIN_SPAN) {
+    const mid = energyP50;
+    energyP10 = clamp01(mid - LOUDNESS_MIN_SPAN / 2);
+    energyP90 = clamp01(mid + LOUDNESS_MIN_SPAN / 2);
+  }
   const dynamics = clamp01((percentile(secDb, 0.95) - percentile(Array.from(secDb).filter((d) => d > -38), 0.15)) / 12); // 0 = flat/compressed, 1 = wide
 
   // Weighted (loud-frame) averages of timbre
@@ -381,12 +422,31 @@ function summarize(F, n, fps, ctx) {
 
   // Sections: full mode → analyzed 1 s energy; sampled mode → coarse RMS pass over the whole song
   let sections;
+  let ce, audible;
   if (mode === 'full') {
     sections = buildSections(secE, energyMean, energyPeak, mode);
   } else {
-    const ce = Float32Array.from(blockRms, (r) => clamp01((20 * Math.log10(r + 1e-6) + 30) / 22));
-    const audible = Array.from(ce).filter((e) => e > 0.05);
+    // Coarse whole-song 1s RMS — already on the perceivedLoudness scale; also becomes energyP*.
+    ce = Float32Array.from(blockRms, (r) => perceivedLoudness(r));
+    audible = Array.from(ce).filter((e) => e > 0.05);
+    const cPool = audible.length ? audible : Array.from(ce);
+    energyP10 = percentile(cPool, 0.10);
+    energyP50 = percentile(cPool, 0.50);
+    energyP90 = percentile(cPool, 0.90);
+    if (energyP90 - energyP10 < LOUDNESS_MIN_SPAN) {
+      const mid = energyP50;
+      energyP10 = clamp01(mid - LOUDNESS_MIN_SPAN / 2);
+      energyP90 = clamp01(mid + LOUDNESS_MIN_SPAN / 2);
+    }
     sections = buildSections(ce, audible.length ? mean(audible) : mean(ce), percentile(ce, 0.95), mode);
+  }
+  for (const sec of sections) {
+    const lo = Math.max(0, Math.round(sec.start));
+    const hi = Math.max(lo + 1, Math.round(sec.end));
+    const e = (mode === 'full')
+      ? mean(secLoud, Math.min(lo, secLoud.length - 1), Math.min(hi, secLoud.length))
+      : sec.energy;
+    sec.loudness = Math.round(relativeLoudness(e, energyP10, energyP90) * 1000) / 1000;
   }
   const firstStrong = sections.find((s) => s.strong);
 
@@ -428,6 +488,9 @@ function summarize(F, n, fps, ctx) {
     duration: +duration.toFixed(2),
     energyMean: r3(energyMean),
     energyPeak: r3(energyPeak),
+    energyP10: r3(energyP10),
+    energyP50: r3(energyP50),
+    energyP90: r3(energyP90),
     dynamics: r3(dynamics),
     aggression: r3(aggression),
     danceability: r3(danceability),
@@ -461,7 +524,7 @@ function summarize(F, n, fps, ctx) {
 function buildSections(secE, eMean, ePeak, mode) {
   const offsetSec = 0;
   const N = secE.length;
-  if (N < 4) return [{ start: offsetSec, end: offsetSec + N, energy: +mean(secE).toFixed(3), label: 'mid', strong: false }];
+  if (N < 4) return [{ start: offsetSec, end: offsetSec + N, energy: +mean(secE).toFixed(3), loudness: 0.5, label: 'mid', strong: false }];
   // smooth 3 s
   const sm = new Float32Array(N);
   for (let i = 0; i < N; i++) sm[i] = mean(secE, Math.max(0, i - 1), Math.min(N, i + 2));

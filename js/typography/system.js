@@ -193,6 +193,12 @@ export class TypographySystem {
       fontSize = Math.min(fontSize, phone ? 34 : 38);
     }
 
+    // style1: ONE lyric treatment per track (horror stark / sad soft / cinematic wide film type …)
+    const ST = this.styleTypo || null;
+    if (ST && Number.isFinite(ST.sizeMul)) fontSize *= ST.sizeMul;
+    const FW = (wt) => (ST ? (wt === '800' ? Math.min(900, (ST.weight || 600) + 150) : (ST.weight || 600)) : wt);
+    const TX = (wd) => (ST && ST.upper ? String(wd).toUpperCase() : wd);
+    try { ctx.letterSpacing = ST && ST.track ? `${(ST.track * fontSize).toFixed(1)}px` : '0px'; } catch (_) { /* soft */ }
     // Placement → y / x — HOLD-2149: edge only (y≥0.78h lower OR y≤0.18h top). Never mid-frame.
     let y;
     let xBias = 0;
@@ -238,45 +244,50 @@ export class TypographySystem {
       const gap = fontSize * 0.28;
 
       for (let i = 0; i < lines[li].words.length; i++) {
-        const word = lines[li].words[i];
+        const word = TX(lines[li].words[i]);
         const active = wordGlobal === this.wordIndex;
-        const weight = active ? '800' : '600';
+        const weight = FW(active ? '800' : '600');
         ctx.font = `${weight} ${Math.round(fontSize)}px "Segoe UI", "Helvetica Neue", system-ui, sans-serif`;
-        ctx.globalAlpha = Math.min(0.88, drawAlpha * (active ? 1 : 0.9));
+        ctx.globalAlpha = Math.min(ST ? (ST.alpha || 0.88) : 0.88, drawAlpha * (active ? 1 : 0.9));
         ctx.shadowBlur = 0;
 
-        // art2: soft dark drop shadow so the caption reads over a busy painting (no plate/card)
+        // art2: fast soft dark halo stroke (replaces per-word shadowBlur)
         if (artMode) {
-          ctx.save();
-          ctx.shadowColor = 'rgba(0,0,0,0.85)';
-          ctx.shadowBlur = Math.max(8, fontSize * 0.55);
-          ctx.shadowOffsetY = Math.max(1, fontSize * 0.06);
-          ctx.fillStyle = 'rgba(0,0,0,0.55)';
-          ctx.fillText(word, x, ly);
-          ctx.restore();
+          ctx.lineWidth = Math.max(4.5, fontSize * 0.24);
+          ctx.strokeStyle = 'rgba(0,0,0,0.34)';
+          ctx.strokeText(word, x, ly + Math.max(1, fontSize * 0.04));
         }
         // Dark stroke under white fill for readability (no opaque plate)
-        const strokeA = active ? 0.65 : 0.5;
+        const strokeA = active ? 0.72 : 0.54;
         ctx.lineWidth = Math.max(2.2, fontSize * 0.09);
-        ctx.strokeStyle = `rgba(0,0,0,${strokeA})`;
+        ctx.strokeStyle = ST ? `rgba(${ST.stroke || '0,0,0'},${strokeA})` : `rgba(0,0,0,${strokeA})`;
         ctx.strokeText(word, x, ly);
+        if (ST) {
+          if (ST.glow && active) {
+            ctx.lineWidth = Math.max(2.6, fontSize * 0.12);
+            ctx.strokeStyle = `rgba(${ST.glow},${0.22 + this.leadBoost * 0.12})`;
+            ctx.strokeText(word, x, ly);
+          }
+          ctx.fillStyle = `rgb(${active ? ST.active : ST.fill})`;
+          ctx.fillText(word, x, ly);
+          x += ctx.measureText(word).width + gap;
+          wordGlobal++;
+          continue;
+        }
 
         if (place === 'motif' || etch > 0.25) {
-          ctx.lineWidth = Math.max(1.0, fontSize * 0.04);
-          ctx.strokeStyle = `rgba(255,255,255,${0.45 + etch * 0.3})`;
-          ctx.shadowColor = 'rgba(255,240,220,0.35)';
-          ctx.shadowBlur = 6 + this.leadBoost * 6 + etch * 8;
+          ctx.lineWidth = Math.max(1.2, fontSize * 0.05);
+          ctx.strokeStyle = `rgba(255,255,255,${0.32 + etch * 0.25})`;
           ctx.strokeText(word, x, ly);
           ctx.fillStyle = active ? 'rgba(255,255,255,0.88)' : 'rgba(240,240,250,0.75)';
           ctx.fillText(word, x, ly);
         } else {
           if (active) {
-            ctx.shadowColor = 'rgba(255,250,240,0.7)';
-            ctx.shadowBlur = 10 + this.leadBoost * 10;
+            ctx.lineWidth = Math.max(2.4, fontSize * 0.11);
+            ctx.strokeStyle = `rgba(255,250,240,${0.22 + this.leadBoost * 0.12})`;
+            ctx.strokeText(word, x, ly);
             ctx.fillStyle = '#ffffff';
           } else {
-            ctx.shadowColor = 'rgba(255,255,255,0.3)';
-            ctx.shadowBlur = 5 + this.leadBoost * 4;
             ctx.fillStyle = '#f0f0f8';
           }
           ctx.fillText(word, x, ly);
