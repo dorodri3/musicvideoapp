@@ -1,6 +1,5 @@
 repo=https://github.com/dorodri3/musicvideoapp
-commit=83d474b24566f0f57e38790e2006d8acb04c0f03
-code_commit=bbdabd4d69732f1efaa9ebc02dbe14ef8b9d55f1
-head=77ad96e82f53dddab2c1077fa4c32a3a25875db4
-pushed=2026-10-19T04:29:35-07:00
-note=art7/art8 push; code_commit is the app change, later commits only record SHAs
+commit=ed77231e33494888e3077eaa0da06ef4f77420b8
+head=ed77231e33494888e3077eaa0da06ef4f77420b8
+pushed=2026-11-25T04:59:46-08:00
+note=SIGN-OFF QA-20261125-0456 mood4 full tree; overwrites Audio Pulse partial c71e16d
